@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { fmt, fmtDate, generateId, todayStr, generateOrderNumber } from '../utils/helpers';
 import { calcOrder } from '../utils/calculations';
-import { STAGE_DEFS, MFG_TYPES_BILINGUAL } from '../utils/constants';
+import { STAGE_DEFS, MFG_TYPES_BILINGUAL, MASTERS_LIST, MASTERS } from '../utils/constants';
 import { useAuth } from '../context/AuthContext';
 
 import ClientSearch from '../components/ClientSearch';
@@ -16,7 +16,6 @@ const EXTRA_TYPES = ["Аутсорс", "Металл", "Камни", "Фурни
 const COATING_TYPES = ["Valge roodium", "Must roodium", "Ruteenium", "Kullatud", "Hõbetatud"];
 const METAL_TYPES = ["Kuld", "Hõbe"];
 const ORDER_STATUSES = ["Запрос", "В работе", "Изделие изготовлено", "Выдано"];
-const MASTERS = ["Oleg", "Kseniya", "Sofia", "Astarot", "Outsource"];
 
 const emptyStages = () => STAGE_DEFS.map(d => ({
   type: d.type,
@@ -225,7 +224,7 @@ export const OrderForm = ({
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Мастер</label>
             <select className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" value={form.assignedMaster} onChange={e => set("assignedMaster", e.target.value)}>
               <option value="">— не назначен —</option>
-              {MASTERS.map(m => <option key={m}>{m}</option>)}
+              {MASTERS_LIST.map(m => <option key={m}>{m}</option>)}
             </select>
           </div>
         </div>
@@ -488,7 +487,7 @@ export const OrderForm = ({
                         <label className="text-[9px] font-bold text-indigo-400 uppercase block mb-1">Мастер покрытия</label>
                         <select className="w-full bg-white border border-indigo-200 rounded-lg px-2 py-1.5 text-xs outline-none" value={ex.coatingMaster} onChange={e => setExtraField(i, "coatingMaster", e.target.value)}>
                           <option value="">—</option>
-                          {["Ксения", "Олег", "Аутсорс"].map(m => <option key={m}>{m}</option>)}
+                          {[MASTERS.KSENIYA, MASTERS.OLEG, MASTERS.OUTSOURCE].map(m => <option key={m}>{m}</option>)}
                         </select>
                       </div>
                       <div>

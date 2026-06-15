@@ -93,7 +93,7 @@ export const CncTab = ({
 
     // VAU заказы из мастерской где Кирилл имеет оплачиваемый этап
     const vau = (orders || []).filter(o => {
-      const kirillStage = (o.stages || []).find(s => s.employee === "Кирилл" && parseFloat(s.cost) > 0);
+      const kirillStage = (o.stages || []).find(s => s.employee === MASTERS.KIRILL && parseFloat(s.cost) > 0);
       if (!kirillStage) return false;
       if (statusFilter === "Все" && oStatus(o) === "Запрос") return false;
       if (statusFilter !== "Все" && oStatus(o) !== statusFilter) return false;
@@ -118,7 +118,7 @@ export const CncTab = ({
   // VAU заказы (полный список для отдельной вкладки)
   const vauOrders = useMemo(() => {
     return (orders || []).filter(o => {
-      const kirillStage = (o.stages || []).find(s => s.employee === "Кирилл" && parseFloat(s.cost) > 0);
+      const kirillStage = (o.stages || []).find(s => s.employee === MASTERS.KIRILL && parseFloat(s.cost) > 0);
       return !!kirillStage;
     }).sort((a, b) => {
       const aDone = oStatus(a) === "Завершено" || oStatus(a) === "Выдано";
@@ -134,7 +134,7 @@ export const CncTab = ({
   }, [orders, vauSort]);
 
   const totalKirill = vauOrders.reduce((s, o) => {
-    const ks = (o.stages || []).filter(st => st.employee === "Кирилл").reduce((s2, st) => s2 + (parseFloat(st.cost) || 0), 0);
+    const ks = (o.stages || []).filter(st => st.employee === MASTERS.KIRILL).reduce((s2, st) => s2 + (parseFloat(st.cost) || 0), 0);
     return s + (o.location === "L24" ? ks * 0.8 : ks);
   }, 0);
 
@@ -343,10 +343,10 @@ export const CncTab = ({
             ) : filtered.map(o => {
               if (o._src === "vau") {
                 // VAU заказ из мастерской
-                const kirillCostRaw = (o.stages || []).filter(st => st.employee === "Кирилл").reduce((s, st) => s + (parseFloat(st.cost) || 0), 0);
+                const kirillCostRaw = (o.stages || []).filter(st => st.employee === MASTERS.KIRILL).reduce((s, st) => s + (parseFloat(st.cost) || 0), 0);
                 const isL24vau = o.location === "L24";
                 const kirillCost = isL24vau ? kirillCostRaw * 0.8 : kirillCostRaw;
-                const kirillStages = (o.stages || []).filter(st => st.employee === "Кирилл" && parseFloat(st.cost) > 0);
+                const kirillStages = (o.stages || []).filter(st => st.employee === MASTERS.KIRILL && parseFloat(st.cost) > 0);
                 const st = oStatus(o);
                 const isExp = expanded === o.id;
                 const isClosed = st === "Завершено" || st === "Выдано";
@@ -562,10 +562,10 @@ export const CncTab = ({
                 <p className="text-slate-400 font-medium">Нет заказов с работой Кирилла</p>
               </div>
             ) : vauOrders.map(o => {
-              const kirillCostRaw = (o.stages || []).filter(st => st.employee === "Кирилл").reduce((s, st) => s + (parseFloat(st.cost) || 0), 0);
+              const kirillCostRaw = (o.stages || []).filter(st => st.employee === MASTERS.KIRILL).reduce((s, st) => s + (parseFloat(st.cost) || 0), 0);
               const isL24vau = o.location === "L24";
               const kirillCost = isL24vau ? kirillCostRaw * 0.8 : kirillCostRaw;
-              const kirillStages = (o.stages || []).filter(st => st.employee === "Кирилл" && parseFloat(st.cost) > 0);
+              const kirillStages = (o.stages || []).filter(st => st.employee === MASTERS.KIRILL && parseFloat(st.cost) > 0);
               const st = oStatus(o);
               const isExp = expandedVau === o.id;
 

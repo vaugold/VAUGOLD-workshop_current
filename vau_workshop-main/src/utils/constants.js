@@ -1,12 +1,39 @@
 // src/utils/constants.js
 
+// =============================================================
+// МАСТЕРА — ЕДИНЫЙ ИСТОЧНИК ПРАВДЫ
+// Используется ВЕЗДЕ: заказы, ремонты, CNC, статистика, формы.
+// Любые другие списки мастеров (DEFAULT_WORKERS, STAGE_DEFS.employees и т.п.)
+// строятся через этот объект, чтобы избежать дублей и опечаток.
+// =============================================================
+export const MASTERS = {
+  KSENIYA:   "Kseniya",
+  KIRILL:    "Kirill",
+  OLEG:      "Oleg",
+  ASTAROT:   "Astarot",
+  SOFIA:     "Sofia",
+  OUTSOURCE: "Outsource"
+};
+
+// Список-форма для .map() / .filter() — автогенерируется из объекта
+export const MASTERS_LIST = Object.values(MASTERS);
+
+// Базовый список для ведомости зарплат (без Аутсорса)
+export const DEFAULT_WORKERS = [
+  MASTERS.KSENIYA,
+  MASTERS.KIRILL,
+  MASTERS.OLEG,
+  MASTERS.SOFIA,
+  MASTERS.ASTAROT
+];
+
 export const STAGE_DEFS = [
-  { type: "Модель / резка", employees: ["Кирилл", "Аутсорс"] },
-  { type: "Литье", employees: ["Ксения", "Аутсорс"] },
-  { type: "Ювелирная работа", employees: ["Олег", "Ксения", "Астарот", "Аутсорс"] },
-  { type: "Эмалирование", employees: ["Ксения"] },
-  { type: "Снятие резинки", employees: ["Ксения", "Аутсорс"] },
-  { type: "Гравировка", employees: ["Кирилл", "Аутсорс"] },
+  { type: "Модель / резка",    employees: [MASTERS.KIRILL, MASTERS.OUTSOURCE] },
+  { type: "Литье",             employees: [MASTERS.KSENIYA, MASTERS.OUTSOURCE] },
+  { type: "Ювелирная работа",  employees: [MASTERS.OLEG, MASTERS.KSENIYA, MASTERS.ASTAROT, MASTERS.OUTSOURCE] },
+  { type: "Эмалирование",      employees: [MASTERS.KSENIYA] },
+  { type: "Снятие резинки",    employees: [MASTERS.KSENIYA, MASTERS.OUTSOURCE] },
+  { type: "Гравировка",        employees: [MASTERS.KIRILL, MASTERS.OUTSOURCE] },
 ];
 
 export const MFG_TYPES_BILINGUAL = [
@@ -89,4 +116,4 @@ export const INITIAL_PROVIDERS = [
 export const CNC_SERVICES = ["3D Моделирование", "CNC Фрезеровка", "3D Печать (Полимер)", "Выращивание восковки"];
 
 // Список мастеров мастерской по умолчанию для генерации пустой ведомости зарплат
-export const DEFAULT_WORKERS = ["Кирилл", "Ксения", "Олег", "София"];
+// (DEFAULT_WORKERS определён выше — рядом с MASTERS)

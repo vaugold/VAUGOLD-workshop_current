@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { fmt, fmtDate, mKey, mLabel, isDone, oStatus } from '../utils/helpers';
 import { calcOrder, calcCNC, L24_COMMISSION } from '../utils/calculations';
-import { DEFAULT_WORKERS } from '../utils/constants';
+import { DEFAULT_WORKERS, MASTERS } from '../utils/constants';
 
 const LOCATIONS = ["Vaugold", "Sikupilli", "L24"];
 
@@ -237,9 +237,9 @@ export const StatsTab = ({ orders = [], cncOrders = [], repairs = [], expenses =
     (o.stages || []).forEach(s => {
       const stageRows = s?.rows ? s.rows : [{ employee: s?.employee, cost: s?.cost }];
       safeFilter(stageRows, r => r).forEach(row => {
-        if (!row.employee || row.employee === "Аутсорс" || !row.cost) return;
+        if (!row.employee || row.employee === MASTERS.OUTSOURCE || !row.cost) return;
         const e = row.employee;
-        if (e === "Олег") { if (!completionOk) return; } 
+        if (e === MASTERS.OLEG) { if (!completionOk) return; } 
         else { const othersOk = isL24 ? completionOk : isDelivered; if (!othersOk) return; }
         
         if (!empStats[e]) empStats[e] = { set: new Set(), total: 0, types: {}, repairCount: 0, repairInc: 0, coatingInc: 0, orderDetails: [], repairDetails: [] };
@@ -253,7 +253,7 @@ export const StatsTab = ({ orders = [], cncOrders = [], repairs = [], expenses =
     const coatingOk = isL24 ? completionOk : isDelivered;
     if (coatingOk) {
       safeFilter(o.extras, ex => ex).forEach(ex => {
-        if (ex.type !== "Покрытие" || !ex.coatingMaster || ex.coatingMaster === "Аутсорс") return;
+        if (ex.type !== "Покрытие" || !ex.coatingMaster || ex.coatingMaster === MASTERS.OUTSOURCE) return;
         const cm = ex.coatingMaster;
         const cmInc = isL24 ? (parseFloat(ex.coatingCost) || 0) * 0.8 : (parseFloat(ex.coatingCost) || 0);
         if (cmInc > 0) {

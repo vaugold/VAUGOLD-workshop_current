@@ -6,6 +6,11 @@
 export const VAT_RATE = 0.24; // НДС 24% (Käibemaks)
 export const L24_COMMISSION = 0.20; // Доля субподряда L24 (20%)
 
+// Импортируем MASTERS — единый источник имён мастеров.
+// Здесь сознательно идёт прямой импорт из constants.js, чтобы
+// любые проверки «кто аутсорс» шли через ту же константу.
+import { MASTERS } from './constants';
+
 /**
  * ПОЛНЫЙ РАСЧЕТ ФИНАНСОВЫХ ПОКАЗАТЕЛЕЙ ЗАКАЗА (ИЗГОТОВЛЕНИЕ)
  * Эта функция берёт "сырой" заказ из базы и высчитывает все деньги:
@@ -23,9 +28,9 @@ export const calcOrder = (o) => {
   // 2. Считаем, сколько мы должны заплатить Аутсорсу за этапы
   const outsourceCost = stages.reduce((s, st) => {
     if (st.rows) {
-      return s + st.rows.filter(r => r.employee === "Аутсорс").reduce((ss, r) => ss + (parseFloat(r.cost) || 0), 0);
+      return s + st.rows.filter(r => r.employee === MASTERS.OUTSOURCE).reduce((ss, r) => ss + (parseFloat(r.cost) || 0), 0);
     }
-    return s + (st.employee === "Аутсорс" ? (parseFloat(st.cost) || 0) : 0);
+    return s + (st.employee === MASTERS.OUTSOURCE ? (parseFloat(st.cost) || 0) : 0);
   }, 0);
 
   const stagesTotal = stages.reduce((s, st) => s + getStageCost(st), 0);
@@ -39,7 +44,7 @@ export const calcOrder = (o) => {
   // 4. Специфичная логика Покрытия (Родий/Позолота)
   // Если покрытие делает Аутсорс, это плюсуется к расходам на Аутсорс.
   const coatingOutsource = (o.extras || [])
-    .filter(e => e.type === "Покрытие" && e.coatingMaster === "Аутсорс")
+    .filter(e => e.type === "Покрытие" && e.coatingMaster === MASTERS.OUTSOURCE)
     .reduce((s, e) => s + (parseFloat(e.coatingCost) || 0), 0);
   
   const totalOutsourceCost = outsourceCost + coatingOutsource;

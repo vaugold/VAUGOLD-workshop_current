@@ -1,7 +1,7 @@
 // src/features/RepairsTab.jsx
 import React, { useState, useMemo, useEffect } from 'react';
 import { fmt, fmtDate, generateId, todayStr, addWorkdays, generateOrderNumber } from '../utils/helpers';
-import { REPAIR_CATEGORIES, DEFAULT_WORKERS } from '../utils/constants';
+import { REPAIR_CATEGORIES, DEFAULT_WORKERS, MASTERS_LIST, MASTERS } from '../utils/constants';
 import { useAuth } from '../context/AuthContext';
 
 // Подключаем компоненты
@@ -18,8 +18,6 @@ const REPAIR_MASTER_STATUSES = ["В работе", "Ремонт готов"];
 const EXTRA_TYPES = ["Аутсорс", "Металл", "Камни", "Фурнитура", "Покрытие", "Другое"];
 const COATING_TYPES = ["Valge roodium", "Must roodium", "Ruteenium", "Kullatud", "Hõbetatud"];
 const METAL_TYPES = ["Kuld", "Hõbe"];
-const MASTERS = ["Oleg", "Kseniya", "Sofia", "Astarot", "Outsource"];
-
 // Эстонские переводы для чека
 const REPAIR_ET_MAP = {
   "Пайка": "Jootmine",
@@ -315,8 +313,8 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
 
       // Находим свободного мастера для соисполнителя
       const usedNames = redistributedWorkers.map(w => w.name);
-      const availableMasters = MASTERS.filter(m => !usedNames.includes(m) && m !== item.masterName);
-      const defaultMaster = availableMasters[0] || MASTERS.find(m => !usedNames.includes(m)) || "Outsource";
+      const availableMasters = MASTERS_LIST.filter(m => !usedNames.includes(m) && m !== item.masterName);
+      const defaultMaster = availableMasters[0] || MASTERS_LIST.find(m => !usedNames.includes(m)) || MASTERS.OUTSOURCE;
 
       redistributedWorkers.push({ name: defaultMaster, percent: oldPercent });
 
@@ -330,8 +328,8 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
     } else {
       // Просто добавляем нового соисполнителя
       const usedNames = workers.map(w => w.name);
-      const availableMasters = MASTERS.filter(m => !usedNames.includes(m));
-      const defaultMaster = availableMasters[0] || MASTERS[0];
+      const availableMasters = MASTERS_LIST.filter(m => !usedNames.includes(m));
+      const defaultMaster = availableMasters[0] || MASTERS_LIST[0];
 
       // Делим между всеми (включая основного, если он уже в списке)
       const newCount = workers.length + 2; // +1 основной, +1 новый
@@ -620,7 +618,7 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                       <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Мастер (кто делает)</label>
                       <select className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none" value={it.masterName || ""} onChange={e => setItem(i, "masterName", e.target.value)}>
                         <option value="">— не задан —</option>
-                        {[...DEFAULT_WORKERS, "Аутсорс"].map(m => <option key={m}>{m}</option>)}
+                        {[...DEFAULT_WORKERS, MASTERS.OUTSOURCE].map(m => <option key={m}>{m}</option>)}
                       </select>
                     </div>
                     <div>
@@ -676,7 +674,7 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                               onChange={e => updateWorkerName(i, it.workers.findIndex(w => w.name === worker.name), e.target.value)}
                             >
                               <option value="">Выбрать</option>
-                              {MASTERS.filter(m => m !== it.masterName).map(m => <option key={m} value={m}>{m}</option>)}
+                              {MASTERS_LIST.filter(m => m !== it.masterName).map(m => <option key={m} value={m}>{m}</option>)}
                             </select>
                             <input
                               type="number"
@@ -725,7 +723,7 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                               <>
                                 <select className="w-20 px-2 py-1.5 text-[10px] bg-white border border-indigo-200 text-indigo-700 rounded outline-none" value={ex.coatingMaster || ""} onChange={e => setItemExtra(i, ei, "coatingMaster", e.target.value)}>
                                   <option value="">Мастер</option>
-                                  {["Ксения", "Олег", "Аутсорс"].map(m => <option key={m}>{m}</option>)}
+                                  {[MASTERS.KSENIYA, MASTERS.OLEG, MASTERS.OUTSOURCE].map(m => <option key={m}>{m}</option>)}
                                 </select>
                                 <input type="number" placeholder="ЗП/Аутс." className="w-16 px-2 py-1.5 text-[10px] bg-white border border-indigo-200 text-indigo-700 rounded outline-none text-right" value={ex.coatingMasterCost || ""} onChange={e => setItemExtra(i, ei, "coatingMasterCost", e.target.value)} />
                               </>

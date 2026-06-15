@@ -1,6 +1,7 @@
 // src/features/RepairStatsTab.jsx
 import React, { useState, useMemo } from 'react';
 import { fmt, fmtDate, todayStr, mKey, mLabel } from '../utils/helpers';
+import { MASTERS } from '../utils/constants';
 
 /**
  * Внутренний компонент для отрисовки простых столбчатых диаграмм на Tailwind.
@@ -154,7 +155,7 @@ export const RepairStatsTab = ({ repairs = [] }) => {
     intake.forEach(r => {
       (r.items || []).forEach(it => {
         const master = it.masterName || "";
-        if (!master || master === "Аутсорс") return;
+        if (!master || master === MASTERS.OUTSOURCE) return;
         if (!m[master]) m[master] = { count: 0, total: 0, delivered: 0 };
         m[master].count++;
         m[master].total += parseFloat(it.price) || 0;
@@ -162,7 +163,7 @@ export const RepairStatsTab = ({ repairs = [] }) => {
         // Учитываем покрытие
         (it.extras || []).forEach(ex => {
           const cm = ex.coatingMaster;
-          if (!cm || cm === "Аутсорс") return;
+          if (!cm || cm === MASTERS.OUTSOURCE) return;
           const cmInc = parseFloat(ex.coatingMasterCost) || 0;
           if (cmInc > 0) {
             if (!m[cm]) m[cm] = { count: 0, total: 0, delivered: 0 };

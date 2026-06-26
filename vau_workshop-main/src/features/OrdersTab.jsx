@@ -1,6 +1,7 @@
 // src/features/OrdersTab.jsx
 import React, { useState, useMemo } from 'react';
-import { fmt, fmtDate, oStatus, mKey, mLabel } from '../utils/helpers';
+import { fmt, fmtDate, oStatus, mKey, mLabel, todayStr } from '../utils/helpers';
+import { useAuth } from '../context/AuthContext';
 import { calcOrder } from '../utils/calculations';
 
 /**
@@ -8,8 +9,9 @@ import { calcOrder } from '../utils/calculations';
  * Сама форма создания/редактирования заказа вынесена в OrderForm.jsx
  */
 export const OrdersTab = ({
-  orders = [], deleteOrder, onOpenViewer, onEditOrder, onOpenReceipt
+  orders = [], setOrders, deleteOrder, onOpenViewer, onEditOrder, onOpenReceipt
 }) => {
+  const { isSuperuser } = useAuth();
   const [expandedId, setExpandedId] = useState(null);
   const [statusFilter, setStatusFilter] = useState("В работе");
   const [search, setSearch] = useState("");
@@ -239,6 +241,21 @@ export const OrdersTab = ({
                           <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase ${o.paymentStatus === 'Оплачено' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
                             {o.paymentStatus === 'Оплачено' ? '✓ Оплачено' : '⏳ Долг'}
                           </span>
+                        )}
+                        {isSuperuser && (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              const newVal = !o.reported;
+                              const updated = { ...o, reported: newVal, reportedDate: newVal ? todayStr() : "" };
+                              setOrders(orders.map(x => x.id === o.id ? updated : x));
+                            }}
+                            className={`cursor-pointer inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border transition-colors whitespace-nowrap select-none ${o.reported ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-white text-slate-500 border-slate-300 hover:border-emerald-400 hover:bg-emerald-50'}`}
+                          >
+                            <span className="text-sm">{o.reported ? '☑' : '☐'}</span>
+                            {o.reported ? `Отчёт ✓ ${fmtDate(o.reportedDate)}` : 'Отчёт'}
+                          </button>
                         )}
                       </div>
                     </div>

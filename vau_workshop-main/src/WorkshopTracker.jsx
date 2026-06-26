@@ -312,7 +312,7 @@ export const WorkshopTracker = () => {
 
           {tab === "new-order" && <OrderForm orders={ordersWithImages} saveOrder={saveOrder} updateOrder={updateOrder} editingOrder={editingOrder} onCancelEdit={() => { setEditingOrder(null); }} customTypes={customTypes} sources={sources} allRepairs={repairs} allCnc={cncOrders} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} />}
 
-          {tab === "order-journal" && <OrdersTab orders={ordersWithImages} deleteOrder={deleteOrder} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} onEditOrder={(o) => { setEditingOrder(o); setTab("new-order"); }} onOpenReceipt={(o) => setOrderReceipt(o)} />}
+          {tab === "order-journal" && <OrdersTab orders={ordersWithImages} setOrders={setOrders} deleteOrder={deleteOrder} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} onEditOrder={(o) => { setEditingOrder(o); setTab("new-order"); }} onOpenReceipt={(o) => setOrderReceipt(o)} />}
 
           {tab === "repairs" && <RepairsTab repairs={repairs} setRepairs={setRepairs} allOrders={ordersWithImages} allCnc={cncOrders} sources={sources} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} />}
 

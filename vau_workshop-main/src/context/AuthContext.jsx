@@ -10,13 +10,23 @@ export const ROLES = {
   MASTER_SIKUPILLI: 'master_sikupilli'  // Мастер Sikupilli - только ремонты и клиенты
 };
 
-// Дефолтный суперпользователь (создается при первом входе)
-const DEFAULT_SUPERUSER = {
-  username: 'admin',
-  password: 'vaugold2024', // Пароль по умолчанию
-  role: ROLES.SUPERUSER,
-  name: 'Администратор'
-};
+// Дефолтные пользователи (используются как fallback, если БД недоступна)
+// ВАЖНО: при любых изменениях паролей — обновлять здесь тоже!
+const DEFAULT_USERS = [
+  {
+    username: 'admin',
+    password: 'odindvatri',  // Актуальный пароль админа (должен совпадать с БД)
+    role: ROLES.SUPERUSER,
+    name: 'Администратор'
+  },
+  {
+    username: 'user123',
+    password: '123123123',
+    role: ROLES.MASTER_SIKUPILLI,
+    name: 'masterok'
+  }
+];
+const DEFAULT_SUPERUSER = DEFAULT_USERS[0]; // Для обратной совместимости
 
 export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
@@ -35,13 +45,14 @@ export const AuthProvider = ({ children }) => {
       if (data?.data && Array.isArray(data.data)) {
         setAllUsers(data.data);
       } else {
-        // Если нет пользователей, создаем дефолтного админа
-        await saveUsers([DEFAULT_SUPERUSER]);
-        setAllUsers([DEFAULT_SUPERUSER]);
+        // Если нет пользователей, создаем дефолтных
+        await saveUsers(DEFAULT_USERS);
+        setAllUsers(DEFAULT_USERS);
       }
     } catch (e) {
       console.error('Load users error:', e);
-      setAllUsers([DEFAULT_SUPERUSER]);
+      // Fallback: используем встроенных дефолтных пользователей (если БД недоступна)
+      setAllUsers(DEFAULT_USERS);
     }
   }, []);
 
@@ -59,20 +70,53 @@ export const AuthProvider = ({ children }) => {
   };
 
   // Проверка сохраненной сессии при загрузке
-  // ⚠️ ВРЕМЕННО: авторизация отключена — сразу заходим как админ.
-  // Чтобы вернуть логин: заменить строку `setCurrentUser(DEFAULT_SUPERUSER)` ниже
-  // на оригинальный блок с проверкой `localStorage.getItem('vaugold_session')`.
   useEffect(() => {
+    let cancelled = false;
+    // Safety net: даже если loadUsers() зависнет, через 4 секунды покажем LoginPage
+    const safetyTimeout = setTimeout(() => {
+      if (!cancelled) {
+        console.warn('[Auth] Safety timeout — показываем LoginPage');
+        setLoading(false);
+      }
+    }, 4000);
+
     const initAuth = async () => {
-      await loadUsers();
-      // === АВТО-ЛОГИН как админ (без логина) ===
-      setCurrentUser(DEFAULT_SUPERUSER);
+      try {
+        // Загружаем пользователей с таймаутом 3 секунды
+        await Promise.race([
+          loadUsers(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('loadUsers timeout')), 3000))
+        ]);
+      } catch (e) {
+        console.warn('[Auth] loadUsers не удался:', e.message);
+        setAllUsers(DEFAULT_USERS);
+      }
+      if (cancelled) return;
+      clearTimeout(safetyTimeout);
+
+      const savedSession = localStorage.getItem('vaugold_session');
+      if (savedSession) {
+        try {
+          const session = JSON.parse(savedSession);
+          const users = allUsers.length > 0 ? allUsers : DEFAULT_USERS;
+          const user = users.find(u => u.username === session.username);
+          if (user) {
+            setCurrentUser(user);
+          } else {
+            localStorage.removeItem('vaugold_session');
+          }
+        } catch (e) {
+          localStorage.removeItem('vaugold_session');
+        }
+      }
       setLoading(false);
     };
     initAuth();
+    return () => { cancelled = true; clearTimeout(safetyTimeout); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Обновляем текущего пользователя когда загрузились пользователи
+  // Обновляем текующего пользователя когда загрузились пользователи
   useEffect(() => {
     if (allUsers.length > 0 && currentUser) {
       const updated = allUsers.find(u => u.username === currentUser.username);
@@ -89,7 +133,7 @@ export const AuthProvider = ({ children }) => {
 
   // Вход
   const login = async (username, password) => {
-    const users = allUsers.length > 0 ? allUsers : [DEFAULT_SUPERUSER];
+    const users = allUsers.length > 0 ? allUsers : DEFAULT_USERS;
     const user = users.find(u => u.username === username && u.password === password);
 
     if (user) {

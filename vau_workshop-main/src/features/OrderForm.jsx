@@ -56,6 +56,9 @@ const createEmptyOrder = (orderNumber = "") => ({
   prepayment: "", prepaymentDate: "", paymentMethod: "Sularaha VAUGOLD", finalPaymentMethod: "Sularaha VAUGOLD", vatEnabled: false,
   l24Prepayment: "", l24PrepaymentDate: "", l24PaymentStatus: "Не оплачено", paymentDate: "", l24PaymentMethod: "Перевод",
   masterTask: "", deadline3d: "", comment: "", images: [],
+  // === Бухгалтерия ===
+  reported: false,                // Заказ передан в бухгалтерию (отметка админа)
+  reportedDate: "",               // Когда отмечен
   // === Итог проекта ===
   finalWeight: "",                // Финальный вес изделия (g)
   finalWeightWithLoss: "",        // Финальный вес с учётом потери металла (g)

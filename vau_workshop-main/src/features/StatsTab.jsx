@@ -396,7 +396,7 @@ export const StatsTab = ({ orders = [], cncOrders = [], repairs = [], expenses =
           {[
             ["summary", "Резюме"], ["finance", "Оплаты"], ["sources", "Источники"], 
             ["services", "Изделия"], ["employees", "Мастера"], ["locations", "Точки"], 
-            ["timing", "Сроки"], ["cnc", "CNC"], ["kassa", "💰 Касса"]
+            ["timing", "Сроки"], ["cnc", "CNC"], ["kassa", "💰 Касса"], ["accounting", "📊 Бухгалтерия"]
           ].map(([id, lbl]) => (
             <button 
               key={id} 
@@ -644,6 +644,170 @@ export const StatsTab = ({ orders = [], cncOrders = [], repairs = [], expenses =
                 </table>
               </div>
             </div>
+          </div>
+        )}
+
+        {stab === "services" && (
+          <div className="space-y-6 animate-fade-in">
+            <h3 className="text-xs font-bold text-slate-400 tracking-wider uppercase mb-2">По типу изделия (завершённые)</h3>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <BarChart data={typeRows.map(([t, v]) => [t, v.income])} colorClass="bg-indigo-400" />
+              <div className="overflow-hidden border border-slate-200 rounded-xl">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs text-slate-500 font-medium border-b border-slate-200">
+                    <tr><th className="p-3">Тип</th><th className="p-3">Кол-во</th><th className="p-3 text-right">Доход</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {typeRows.map(([t, v]) => (
+                      <tr key={t} className="hover:bg-slate-50">
+                        <td className="p-3 font-semibold text-slate-700">{t}</td>
+                        <td className="p-3 text-slate-500">{v.count}</td>
+                        <td className="p-3 text-right font-bold text-indigo-600">{fmt(v.income)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {stab === "accounting" && (
+          <div className="space-y-6 animate-fade-in">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xs font-bold text-slate-400 tracking-wider uppercase">📊 Бухгалтерия — переданные в отчёт ({periodLabel})</h3>
+              <div className="text-[10px] text-slate-400 italic">Галочка «Отчёт» ставится вручную админом в карточках заказов и ремонтов.</div>
+            </div>
+
+            {(() => {
+              // === Определяем фирму и тип оплаты ===
+              const firmOf = m => {
+                if (!m) return "VAUGOLD";
+                if (m.includes("EM")) return "EM";
+                if (m === "Перевод") return "VAUGOLD";
+                return "VAUGOLD";
+              };
+              const typeOf = m => {
+                if (!m) return "Sularaha";
+                if (m.startsWith("Pank")) return "Pank";
+                if (m.startsWith("Kaart")) return "Kaart";
+                if (m === "Перевод") return "Pank";
+                return "Sularaha";
+              };
+
+              // === Собираем отмеченные записи ===
+              const reportedOrders = safeFilter(safeOrders, o =>
+                !o.isDraft && o.reported === true && inPeriod(o.paymentDate || o.deliveryDate || o.orderDate)
+              );
+              const reportedRepairs = safeFilter(safeRepairs, r =>
+                !r.isDraft && r.reported === true && inPeriod(r.paymentDate || r.deliveryDate || r.orderDate)
+              );
+
+              const allReported = [
+                ...reportedOrders.map(o => ({
+                  type: "Заказ", orderNumber: o.orderNumber, title: o.orderTitle || o.clientName,
+                  date: o.paymentDate || o.deliveryDate || o.orderDate,
+                  method: o.paymentMethod || "Sularaha VAUGOLD",
+                  amount: (parseFloat(o.prepayment) || 0) + (o.paymentDate ? (o.location === "L24" ? safeCalcOrder(o).l24Remaining : safeCalcOrder(o).balance) || 0 : 0)
+                })),
+                ...reportedRepairs.map(r => ({
+                  type: "Ремонт", orderNumber: r.orderNumber, title: r.clientName,
+                  date: r.paymentDate || r.deliveryDate || r.orderDate,
+                  method: r.paymentMethod || "Sularaha VAUGOLD",
+                  amount: (parseFloat(r.prepayment) || 0) + (parseFloat(r.balanceWithVat || r.balance) || 0)
+                }))
+              ];
+
+              // === Группируем: firms[firm][type] = { sum, items[] } ===
+              const firms = {
+                VAUGOLD: { Pank: { sum: 0, items: [] }, Kaart: { sum: 0, items: [] }, Sularaha: { sum: 0, items: [] } },
+                EM:      { Pank: { sum: 0, items: [] }, Kaart: { sum: 0, items: [] }, Sularaha: { sum: 0, items: [] } }
+              };
+              allReported.forEach(it => {
+                const f = firmOf(it.method);
+                const t = typeOf(it.method);
+                firms[f][t].sum += it.amount;
+                firms[f][t].items.push(it);
+              });
+              const totalByFirm = f => firms[f].Pank.sum + firms[f].Kaart.sum + firms[f].Sularaha.sum;
+              const grandTotal = totalByFirm("VAUGOLD") + totalByFirm("EM");
+
+              return (
+                <>
+                  {/* === Общая шапка === */}
+                  <div className="bg-slate-900 p-5 rounded-2xl shadow-lg text-center">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">ВСЕГО В ОТЧЁТЕ ЗА {periodLabel.toUpperCase()}</span>
+                    <span className="text-4xl font-black text-emerald-400 block mt-2">{fmt(grandTotal)}</span>
+                    <span className="text-xs text-slate-400 mt-1 block">{allReported.length} записей</span>
+                  </div>
+
+                  {/* === 2 колонки: VAUGOLD | EM === */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {[
+                      { key: "VAUGOLD", label: "🟡 VAUGOLD OÜ",     border: "border-amber-300", bg: "bg-amber-50",   text: "text-amber-900", header: "bg-amber-200" },
+                      { key: "EM",      label: "🔵 EHTEMEISTER (EM)", border: "border-blue-300",  bg: "bg-blue-50",    text: "text-blue-900",  header: "bg-blue-200" }
+                    ].map(firm => {
+                      const f = firms[firm.key];
+                      const total = totalByFirm(firm.key);
+                      return (
+                        <div key={firm.key} className={`bg-white border-2 ${firm.border} rounded-2xl overflow-hidden shadow-sm`}>
+                          {/* Заголовок фирмы */}
+                          <div className={`${firm.header} px-5 py-4 border-b-2 ${firm.border}`}>
+                            <div className="flex justify-between items-center">
+                              <span className={`text-lg font-black ${firm.text}`}>{firm.label}</span>
+                              <span className={`text-2xl font-black ${firm.text}`}>{fmt(total)}</span>
+                            </div>
+                          </div>
+
+                          {/* 3 секции: Pank, Kaart, Sularaha */}
+                          <div className="p-4 space-y-4">
+                            {[
+                              { key: "Pank",      icon: "🏦", label: "Pank" },
+                              { key: "Kaart",     icon: "💳", label: "Kaart" },
+                              { key: "Sularaha",  icon: "💵", label: "Sularaha" }
+                            ].map(type => {
+                              const cell = f[type.key];
+                              const isEmpty = cell.items.length === 0;
+                              return (
+                                <div key={type.key} className={`rounded-xl border ${isEmpty ? 'border-slate-100 bg-slate-50' : 'border-slate-200 bg-white'} overflow-hidden`}>
+                                  <div className={`flex justify-between items-center px-3 py-2 ${isEmpty ? 'bg-slate-100' : 'bg-slate-50'} border-b border-slate-200`}>
+                                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">{type.icon} {type.label}</span>
+                                    <span className={`text-sm font-black ${isEmpty ? 'text-slate-400' : firm.text}`}>{fmt(cell.sum)}</span>
+                                  </div>
+                                  {isEmpty ? (
+                                    <div className="px-3 py-3 text-[10px] text-slate-400 italic text-center">Нет отмеченных чеков</div>
+                                  ) : (
+                                    <div className="divide-y divide-slate-100">
+                                      {cell.items.map((it, idx) => (
+                                        <div key={idx} className="px-3 py-2 flex justify-between items-center hover:bg-slate-50 transition-colors">
+                                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                                            <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 ${it.type === "Заказ" ? "bg-blue-100 text-blue-700" : "bg-violet-100 text-violet-700"}`}>{it.type}</span>
+                                            <span className="font-mono text-[10px] font-bold text-slate-600 shrink-0">{it.orderNumber || "—"}</span>
+                                            <span className="text-xs text-slate-700 truncate">{it.title}</span>
+                                            <span className="text-[10px] text-slate-400 shrink-0">{fmtDate(it.date)}</span>
+                                          </div>
+                                          <span className={`text-sm font-bold ${firm.text} shrink-0 ml-2`}>{fmt(it.amount)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+
+                            {/* Итого по фирме */}
+                            <div className={`flex justify-between items-center px-4 py-3 ${firm.bg} rounded-xl border-2 ${firm.border}`}>
+                              <span className={`text-xs font-black ${firm.text} uppercase tracking-wider`}>Итого {firm.key}</span>
+                              <span className={`text-xl font-black ${firm.text}`}>{fmt(total)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
 

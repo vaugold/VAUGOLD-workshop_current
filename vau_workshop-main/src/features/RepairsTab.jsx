@@ -230,12 +230,15 @@ const createEmptyRepair = (orderNumber = "", userRole = 'superuser') => ({
   prepayment: "", paymentMethod: "Sularaha VAUGOLD", finalPaymentMethod: "Sularaha VAUGOLD", vatEnabled: false,
   l24PaymentStatus: "Не оплачено", l24PaymentDate: "",
   items: [emptyRepairItem()],
+  // === Бухгалтерия ===
+  reported: false,                  // Передано в бухгалтерию (отметка админа)
+  reportedDate: "",
 });
 
 
 export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = [], sources = [], onOpenViewer }) => {
   // Получаем текущего пользователя для генерации номера заказа
-  const { currentUser } = useAuth();
+  const { currentUser, isSuperuser } = useAuth();
 
   // Функция для генерации нового номера заказа
   const getNewRepairNumber = () => {
@@ -1072,6 +1075,22 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                           {r.pickupPoint && <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase ${r.pickupPoint === 'Sikupilli' ? 'bg-purple-100 text-purple-700' : 'bg-indigo-100 text-indigo-700'}`}>📍 {r.pickupPoint}</span>}
                           {r.awaitingClient && r.receptionStatus !== "Выдано клиенту" && (
                             <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase bg-violet-100 text-violet-700">⏳ Ожидает клиента</span>
+                          )}
+                          {isSuperuser && (
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                const newVal = !r.reported;
+                                const today = new Date().toISOString().slice(0,10);
+                                setRepairs(repairs.map(x => x.id === r.id ? { ...x, reported: newVal, reportedDate: newVal ? today : "" } : x));
+                              }}
+                              className={`cursor-pointer inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border transition-colors whitespace-nowrap select-none ${r.reported ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-white text-slate-500 border-slate-300 hover:border-emerald-400 hover:bg-emerald-50'}`}
+                            >
+                              <span className="text-sm">{r.reported ? '☑' : '☐'}</span>
+                              {r.reported ? `Отчёт ✓ ${fmtDate(r.reportedDate)}` : 'Отчёт'}
+                            </button>
                           )}
                         </div>
                       </div>

@@ -59,23 +59,14 @@ export const AuthProvider = ({ children }) => {
   };
 
   // Проверка сохраненной сессии при загрузке
+  // ⚠️ ВРЕМЕННО: авторизация отключена — сразу заходим как админ.
+  // Чтобы вернуть логин: заменить строку `setCurrentUser(DEFAULT_SUPERUSER)` ниже
+  // на оригинальный блок с проверкой `localStorage.getItem('vaugold_session')`.
   useEffect(() => {
     const initAuth = async () => {
       await loadUsers();
-
-      const savedSession = localStorage.getItem('vaugold_session');
-      if (savedSession) {
-        try {
-          const session = JSON.parse(savedSession);
-          const users = allUsers.length > 0 ? allUsers : [DEFAULT_SUPERUSER];
-          const user = users.find(u => u.username === session.username);
-          if (user) {
-            setCurrentUser(user);
-          }
-        } catch (e) {
-          localStorage.removeItem('vaugold_session');
-        }
-      }
+      // === АВТО-ЛОГИН как админ (без логина) ===
+      setCurrentUser(DEFAULT_SUPERUSER);
       setLoading(false);
     };
     initAuth();

@@ -35,7 +35,10 @@ export const calcOrder = (o) => {
 
   const stagesTotal = stages.reduce((s, st) => s + getStageCost(st), 0);
   const markup = parseFloat(o.markup) || 0; // Наценка
-  const workTotal = stagesTotal + markup; // Работа + Наценка
+  // === «Стоимость изготовления» (productionCost) — то, что идёт в чек клиенту ===
+  // Если поле заполнено — используем его. Иначе fallback для старых заказов: этапы + наценка.
+  const productionCost = parseFloat(o.productionCost) || (stagesTotal + markup);
+  const workTotal = productionCost; // Итог работы в чеке
 
   // 3. Считаем доп. позиции (Металл клиента, камни и т.д.)
   const extrasPrice = (o.extras || []).reduce((s, e) => s + (parseFloat(e.price) || 0), 0); // Сколько платит клиент
@@ -53,9 +56,13 @@ export const calcOrder = (o) => {
   const clientTotal = workTotal + extrasPrice; // Сумма клиенту без НДС
   const vat = o.vatEnabled ? clientTotal * VAT_RATE : 0; // Сумма НДС
   const clientTotalWithVat = clientTotal + vat; // Итого к оплате с НДС
-  
+
   const prepayment = parseFloat(o.prepayment) || 0; // Внесенный аванс
-  const balance = clientTotalWithVat - prepayment; // Остаток к доплате
+  // === Остаток к доплате ===
+  // Логика: если стоит `paymentDate` (дата полной оплаты) — финальный платёж прошёл, остаток = 0.
+  // (Пользователь использует поле paymentDate как флаг «оплачено полностью».)
+  const finalPaymentDate = o.paymentDate;
+  const balance = finalPaymentDate ? 0 : (clientTotalWithVat - prepayment); // Остаток к доплате
 
   // 6. Специфичная логика работы с торговой точкой L24
   const isL24 = o.location === "L24";
@@ -71,6 +78,7 @@ export const calcOrder = (o) => {
     stagesTotal,
     outsourceCost: totalOutsourceCost,
     markup,
+    productionCost,     // ← итог работы (новое поле в форме)
     workTotal,
     extrasPrice,
     extrasCost,

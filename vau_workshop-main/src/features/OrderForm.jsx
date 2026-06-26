@@ -1,6 +1,6 @@
 // src/features/OrderForm.jsx
 import React, { useState, useMemo, useEffect } from 'react';
-import { fmt, fmtDate, generateId, todayStr, generateOrderNumber } from '../utils/helpers';
+import { fmt, fmtDate, generateId, todayStr, generateOrderNumber, phonesMatch } from '../utils/helpers';
 import { calcOrder } from '../utils/calculations';
 import { STAGE_DEFS, MFG_TYPES_BILINGUAL, MASTERS_LIST, MASTERS } from '../utils/constants';
 import { useAuth } from '../context/AuthContext';
@@ -11,7 +11,7 @@ import DraftBanner from '../components/DraftBanner';
 import { useAutoSave } from '../hooks/useAutoSave';
 
 const LOCATIONS = ["Vaugold", "Sikupilli", "L24"];
-const PAY_METHODS = ["Наличные", "Карта", "По банку"];
+const PAY_METHODS = ["Sularaha VAUGOLD", "Sularaha EM", "Pank VAUGOLD", "Pank EM", "Kaart VAUGOLD", "Kaart EM"];
 const EXTRA_TYPES = ["Аутсорс", "Металл", "Камни", "Фурнитура", "Покрытие", "Другое"];
 const COATING_TYPES = ["Valge roodium", "Must roodium", "Ruteenium", "Kullatud", "Hõbetatud"];
 const METAL_TYPES = ["Kuld", "Hõbe"];
@@ -24,21 +24,44 @@ const emptyStages = () => STAGE_DEFS.map(d => ({
   rows: d.type === "Ювелирная работа" ? [{ employee: d.employees[0], cost: "" }, { employee: "", cost: "" }] : null
 }));
 
-const emptyExtra = () => ({ description: "", price: "", cost: "", type: "", coatingMaster: "", coatingCost: "" });
+const emptyExtra = () => ({
+  description: "",
+  price: "",           // Итоговая стоимость клиенту
+  cost: "",            // Итоговая себестоимость
+  // === Поля для золота (Kuld) — кросс-формулы цена/грамм × вес = итого ===
+  priceWeight: "",     // Вес (g) для расчёта цены клиенту
+  pricePerGram: "",    // Цена за грамм (€/g) для клиента
+  costWeight: "",      // Вес (g) для расчёта себестоимости
+  costPerGram: "",     // Себестоимость за грамм (€/g)
+  type: "",
+  coatingMaster: "",
+  coatingCost: ""
+});
 
 // Создание пустой заявки с автогенерацией номера
 const createEmptyOrder = (orderNumber = "") => ({
-  orderNumber: orderNumber, orderNumber2: "", orderTitle: "", clientName: "", clientPhone: "", clientEmail: "",
+  orderNumber: orderNumber,
+  orderNumber2: "",          // № второго счёта (если оплата в 2 этапа по разным счетам)
+  orderTitle: "", clientName: "", clientPhone: "", clientEmail: "",
   showClient2: false, client2Name: "", client2Phone: "",
   serviceType: MFG_TYPES_BILINGUAL[0][0], location: "Vaugold", source: "", isRepeat: "Новый",
   orderDate: todayStr(), deadline: "", workDoneDate: "", deliveryDate: "", status: "В работе",
+  awaitingClient: false,           // Заказ ожидает клиента (авто-сбрасывается при указании deliveryDate)
+  transportVauSiku: false,         // Ожидает курьера VAU → Sikupilli
+  transportSikuVau: false,         // Ожидает курьера Sikupilli → VAU
   metalGiven: "", withStones: false, crossSell: false,
-  stages: emptyStages(), markup: "", extras: [emptyExtra()],
-  prepayment: "", paymentMethod: "Наличные", finalPaymentMethod: "Наличные", vatEnabled: false,
+  stages: emptyStages(), markup: "",
+  productionCost: "",              // Стоимость изготовления (итого в чек клиенту: работа + наценка + extras)
+  extras: [emptyExtra()],
+  prepayment: "", prepaymentDate: "", paymentMethod: "Sularaha VAUGOLD", finalPaymentMethod: "Sularaha VAUGOLD", vatEnabled: false,
   l24Prepayment: "", l24PrepaymentDate: "", l24PaymentStatus: "Не оплачено", paymentDate: "", l24PaymentMethod: "Перевод",
   masterTask: "", deadline3d: "", comment: "", images: [],
-  finalWeight: "", finalWeightWithLoss: "", finalToAdd: "", finalToReturn: "",
-  assignedMaster: ""
+  // === Итог проекта ===
+  finalWeight: "",                // Финальный вес изделия (g)
+  finalWeightWithLoss: "",        // Финальный вес с учётом потери металла (g)
+  finalToAdd: "",                 // Сколько металла нужно добавить клиенту (g)
+  finalToReturn: "",              // Сколько металла вернуть клиенту (g)
+  assignedMaster: ""              // DEPRECATED: остался для совместимости со старыми заказами
 });
 
 /**
@@ -80,6 +103,53 @@ export const OrderForm = ({
     }
   }, [draft, isEditing]);
 
+  // === АВТО-ЗАПОЛНЕНИЕ для старых заказов ===
+  // 1) productionCost пуст → заполняем = сумма этапов + наценка
+  // 2) prepaymentDate пуст, а есть аванс → ставим = дате приёма заказа
+  // 3) paymentDate пуст, а заказ выдан → ставим = дате выдачи
+  useEffect(() => {
+    if (!isEditing || !editingOrder) return;
+    const updates = {};
+
+    // 1) productionCost
+    if (!editingOrder.productionCost || parseFloat(editingOrder.productionCost) <= 0) {
+      const stagesTotal = (editingOrder.stages || []).reduce((s, st) => {
+        if (st.rows) return s + st.rows.reduce((ss, r) => ss + (parseFloat(r.cost) || 0), 0);
+        return s + (parseFloat(st.cost) || 0);
+      }, 0);
+      const markup = parseFloat(editingOrder.markup) || 0;
+      const total = stagesTotal + markup;
+      if (total > 0) {
+        updates.productionCost = total.toFixed(2);
+        console.log(`[Бэкфилл] Заказ ${editingOrder.id}: productionCost = ${updates.productionCost}`);
+      }
+    }
+
+    // 2) prepaymentDate (дата аванса)
+    if (!editingOrder.prepaymentDate && parseFloat(editingOrder.prepayment) > 0 && editingOrder.orderDate) {
+      updates.prepaymentDate = editingOrder.orderDate;
+      console.log(`[Бэкфилл] Заказ ${editingOrder.id}: prepaymentDate = ${updates.prepaymentDate}`);
+    }
+
+    // 3) paymentDate (дата полной оплаты)
+    if (!editingOrder.paymentDate && editingOrder.deliveryDate) {
+      updates.paymentDate = editingOrder.deliveryDate;
+      console.log(`[Бэкфилл] Заказ ${editingOrder.id}: paymentDate = ${updates.paymentDate}`);
+    }
+
+    if (Object.keys(updates).length > 0) {
+      setForm(p => ({ ...p, ...updates }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingOrder?.id]);
+
+  // === Авто-сброс «Ожидает клиента» при указании даты выдачи ===
+  useEffect(() => {
+    if (form.deliveryDate && form.awaitingClient) {
+      set("awaitingClient", false);
+    }
+  }, [form.deliveryDate]);
+
   // Автосохранение при изменении формы
   useEffect(() => {
     if (!isEditing && form) {
@@ -102,6 +172,43 @@ export const OrderForm = ({
     const e = [...form.extras];
     e[i] = { ...e[i], [k]: v };
     set("extras", e);
+  };
+
+  // === Кросс-формулы для золота (Kuld) ===
+  // При вводе любых двух из трёх (вес, цена за грамм, итого) — третье авто-считается.
+  // Сделано отдельно для «цена клиенту» и «себестоимость».
+  const setKuldField = (extraIdx, side, field, value) => {
+    const extras = [...form.extras];
+    const ex = { ...extras[extraIdx], [field]: value };
+
+    const W  = side === "price" ? "priceWeight"   : "costWeight";
+    const PG = side === "price" ? "pricePerGram"  : "costPerGram";
+    const TOT = side === "price" ? "price" : "cost";
+
+    const w  = parseFloat(ex[W])  || 0;
+    const pg = parseFloat(ex[PG]) || 0;
+    const t  = parseFloat(value)  || 0;
+
+    if (field === W) {
+      // ввели вес → если есть €/г, считаем итого
+      if (pg > 0) ex[TOT] = (t * pg).toFixed(2);
+    } else if (field === PG) {
+      // ввели €/г → если есть вес, считаем итого
+      if (w > 0) ex[TOT] = (w * t).toFixed(2);
+    } else if (field === TOT) {
+      // ввели итого → считаем то, чего не хватает
+      if (w > 0) {
+        // вес есть → считаем €/г
+        ex[PG] = (t / w).toFixed(2);
+      } else if (pg > 0) {
+        // €/г есть, веса нет → считаем вес
+        ex[W] = (t / pg).toFixed(2);
+      }
+      // если ни веса ни €/г нет — просто сохраняем итого как есть
+    }
+
+    extras[extraIdx] = ex;
+    set("extras", extras);
   };
 
   const handlePhotoUpload = (e) => {
@@ -194,7 +301,15 @@ export const OrderForm = ({
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">№ заказа</label>
             <input type="text" placeholder="2026-041" className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" value={form.orderNumber} onChange={e => set("orderNumber", e.target.value)} />
           </div>
-          <div className="md:col-span-2">
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">№ 2-го счёта <span className="text-slate-400 font-normal normal-case">(если оплата в 2 этапа)</span></label>
+            <input type="text" placeholder="2026-041/2" className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" value={form.orderNumber2} onChange={e => set("orderNumber2", e.target.value)} />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Стоимость изготовления <span className="text-emerald-600 font-normal normal-case">(итого в чек клиенту)</span></label>
+            <input type="number" min="0" step="0.01" placeholder="0.00" className="w-full px-4 py-2 bg-emerald-50/50 border-2 border-emerald-200 rounded-xl text-base font-bold text-emerald-700 outline-none focus:ring-2 focus:ring-emerald-500" value={form.productionCost || ""} onChange={e => set("productionCost", e.target.value)} />
+          </div>
+          <div className="md:col-span-3">
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Название проекта</label>
             <input type="text" placeholder="Напр: Обручальные Анна+Марк" className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" value={form.orderTitle} onChange={e => set("orderTitle", e.target.value)} />
           </div>
@@ -215,16 +330,9 @@ export const OrderForm = ({
             </select>
           </div>
           <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Точка</label>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Пункт приёма</label>
             <select className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" value={form.location} onChange={e => set("location", e.target.value)}>
               {LOCATIONS.map(l => <option key={l}>{l}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Мастер</label>
-            <select className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" value={form.assignedMaster} onChange={e => set("assignedMaster", e.target.value)}>
-              <option value="">— не назначен —</option>
-              {MASTERS_LIST.map(m => <option key={m}>{m}</option>)}
             </select>
           </div>
         </div>
@@ -239,7 +347,7 @@ export const OrderForm = ({
         <div className="p-5 border border-slate-200 rounded-2xl space-y-4">
           <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Данные клиента</h3>
 
-          {form.clientPhone && [...orders, ...allRepairs, ...allCnc].filter(o => o.id !== editingId && o.clientPhone === form.clientPhone).length > 0 && (
+          {form.clientPhone && [...orders, ...allRepairs, ...allCnc].filter(o => o.id !== editingId && phonesMatch(o.clientPhone, form.clientPhone)).length > 0 && (
             <div className="bg-emerald-50 text-emerald-700 text-xs font-bold px-3 py-2 rounded-lg border border-emerald-200 inline-block">
               ↩ Повторный клиент
             </div>
@@ -251,7 +359,7 @@ export const OrderForm = ({
             clientEmail={form.clientEmail}
             allHistory={[...orders, ...allRepairs, ...allCnc]}
             onSelect={data => {
-              const isRpt = data.clientPhone ? [...orders, ...allRepairs, ...allCnc].some(o => o.clientPhone === data.clientPhone && o.id !== editingId) : false;
+              const isRpt = data.clientPhone ? [...orders, ...allRepairs, ...allCnc].some(o => phonesMatch(o.clientPhone, data.clientPhone) && o.id !== editingId) : false;
               setForm(p => ({ ...p, ...data, isRepeat: isRpt ? "Повторный" : "Новый" }));
             }}
           />
@@ -264,7 +372,7 @@ export const OrderForm = ({
 
             {!form.showClient2 && (
               <button type="button" onClick={() => set("showClient2", true)} className="text-xs border border-dashed border-slate-300 text-slate-500 px-3 py-1 rounded-lg hover:bg-slate-50 transition-colors">
-                + Добавить второго клиента (пара)
+                + Добавить второго клиента
               </button>
             )}
           </div>
@@ -304,6 +412,25 @@ export const OrderForm = ({
             <select className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold outline-none focus:ring-2" value={form.status} onChange={e => set("status", e.target.value)}>
               {ORDER_STATUSES.map(s => <option key={s}>{s}</option>)}
             </select>
+          </div>
+        </div>
+
+        {/* === ТРАНСПОРТИРОВКА + ОЖИДАНИЕ КЛИЕНТА === */}
+        <div className="mt-3 p-4 bg-slate-50 rounded-2xl border border-slate-200">
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Транспортировка (курьер)</div>
+          <div className="flex flex-wrap gap-3">
+            <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer bg-orange-50 border border-orange-200 px-3 py-2 rounded-lg hover:bg-orange-100 transition-colors">
+              <input type="checkbox" checked={!!form.transportVauSiku} onChange={e => set("transportVauSiku", e.target.checked)} className="w-4 h-4 rounded text-orange-600 cursor-pointer" />
+              <span className="font-semibold">🛵 VAU → Sikupilli</span>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer bg-teal-50 border border-teal-200 px-3 py-2 rounded-lg hover:bg-teal-100 transition-colors">
+              <input type="checkbox" checked={!!form.transportSikuVau} onChange={e => set("transportSikuVau", e.target.checked)} className="w-4 h-4 rounded text-teal-600 cursor-pointer" />
+              <span className="font-semibold">🛵 Sikupilli → VAU</span>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer bg-violet-50 border border-violet-200 px-3 py-2 rounded-lg hover:bg-violet-100 transition-colors">
+              <input type="checkbox" checked={!!form.awaitingClient} onChange={e => set("awaitingClient", e.target.checked)} className="w-4 h-4 rounded text-violet-600 cursor-pointer" disabled={!!form.deliveryDate} />
+              <span className={`font-semibold ${form.deliveryDate ? "text-slate-400 line-through" : ""}`}>⏳ Ожидает клиента{form.deliveryDate && " (выдан)"}</span>
+            </label>
           </div>
         </div>
 
@@ -441,6 +568,7 @@ export const OrderForm = ({
             {form.extras.map((ex, i) => {
               const isMetal = ex.type === "Металл";
               const isCoating = ex.type === "Покрытие";
+              const isKuld = isMetal && ex.description === "Kuld";
 
               return (
                 <div key={i} className="bg-white p-3 md:p-4 rounded-xl border border-slate-200 relative">
@@ -461,7 +589,7 @@ export const OrderForm = ({
                           <option value="">—</option>{COATING_TYPES.map(t => <option key={t}>{t}</option>)}
                         </select>
                       ) : isMetal ? (
-                        <select className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs outline-none" value={ex.description} onChange={e => setExtraField(i, "description", e.target.value)}>
+                        <select className={`w-full bg-slate-50 border rounded-lg px-2 py-1.5 text-xs outline-none ${isKuld ? "border-amber-400 ring-1 ring-amber-200" : "border-slate-200"}`} value={ex.description} onChange={e => setExtraField(i, "description", e.target.value)}>
                           <option value="">—</option>{METAL_TYPES.map(t => <option key={t}>{t}</option>)}
                         </select>
                       ) : (
@@ -470,16 +598,64 @@ export const OrderForm = ({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 mt-3 border-t border-slate-100 pt-3">
-                    <div>
-                      <label className="text-[9px] font-bold text-rose-400 uppercase block mb-1">Себестоимость (€)</label>
-                      <input type="number" className="w-full bg-rose-50/50 border border-rose-100 rounded-lg px-2 py-1.5 text-xs outline-none font-semibold text-rose-700" value={ex.cost} onChange={e => setExtraField(i, "cost", e.target.value)} placeholder="0.00" />
+                  {isKuld ? (
+                    /* === РЕЖИМ ЗОЛОТО: кросс-формулы вес × цена/грамм = итого === */
+                    <div className="mt-3 border-t border-amber-200 pt-3">
+                      <div className="text-[9px] font-bold text-amber-700 uppercase mb-2">✨ Золото (Kuld) — кросс-формулы: вес × €/г = итого</div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* === Себестоимость (для нас) === */}
+                        <div className="bg-rose-50/60 border border-rose-200 rounded-lg p-3">
+                          <div className="text-[9px] font-bold text-rose-600 uppercase mb-2">Себестоимость (наша закупка)</div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="text-[8px] text-rose-400 uppercase block mb-0.5">Вес (g)</label>
+                              <input type="number" step="0.01" className="w-full bg-white border border-rose-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.costWeight || ""} onChange={e => setKuldField(i, "cost", "costWeight", e.target.value)} placeholder="0" />
+                            </div>
+                            <div>
+                              <label className="text-[8px] text-rose-400 uppercase block mb-0.5">€/г (закупка)</label>
+                              <input type="number" step="0.01" className="w-full bg-white border border-rose-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.costPerGram || ""} onChange={e => setKuldField(i, "cost", "costPerGram", e.target.value)} placeholder="0" />
+                            </div>
+                            <div>
+                              <label className="text-[8px] text-rose-700 uppercase block mb-0.5 font-black">Итого себ.</label>
+                              <input type="number" step="0.01" className="w-full bg-rose-100 border-2 border-rose-300 rounded px-2 py-1.5 text-xs font-bold text-rose-800 outline-none" value={ex.cost || ""} onChange={e => setExtraField(i, "cost", e.target.value)} placeholder="0.00" />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* === Цена клиенту === */}
+                        <div className="bg-emerald-50/60 border border-emerald-200 rounded-lg p-3">
+                          <div className="text-[9px] font-bold text-emerald-600 uppercase mb-2">Цена клиенту (продажа)</div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="text-[8px] text-emerald-400 uppercase block mb-0.5">Вес (g)</label>
+                              <input type="number" step="0.01" className="w-full bg-white border border-emerald-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.priceWeight || ""} onChange={e => setKuldField(i, "price", "priceWeight", e.target.value)} placeholder="0" />
+                            </div>
+                            <div>
+                              <label className="text-[8px] text-emerald-400 uppercase block mb-0.5">€/г (клиенту)</label>
+                              <input type="number" step="0.01" className="w-full bg-white border border-emerald-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.pricePerGram || ""} onChange={e => setKuldField(i, "price", "pricePerGram", e.target.value)} placeholder="0" />
+                            </div>
+                            <div>
+                              <label className="text-[8px] text-emerald-700 uppercase block mb-0.5 font-black">Итого прод.</label>
+                              <input type="number" step="0.01" className="w-full bg-emerald-100 border-2 border-emerald-300 rounded px-2 py-1.5 text-xs font-bold text-emerald-800 outline-none" value={ex.price || ""} onChange={e => setExtraField(i, "price", e.target.value)} placeholder="0.00" />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-[9px] font-bold text-emerald-500 uppercase block mb-1">Цена клиенту (€)</label>
-                      <input type="number" className="w-full bg-emerald-50/50 border border-emerald-100 rounded-lg px-2 py-1.5 text-xs outline-none font-semibold text-emerald-700" value={ex.price} onChange={e => setExtraField(i, "price", e.target.value)} placeholder="0.00" />
+                  ) : (
+                    /* === ОБЫЧНЫЙ РЕЖИМ (без золота) === */
+                    <div className="grid grid-cols-2 gap-4 mt-3 border-t border-slate-100 pt-3">
+                      <div>
+                        <label className="text-[9px] font-bold text-rose-400 uppercase block mb-1">Себестоимость (€)</label>
+                        <input type="number" className="w-full bg-rose-50/50 border border-rose-100 rounded-lg px-2 py-1.5 text-xs outline-none font-semibold text-rose-700" value={ex.cost} onChange={e => setExtraField(i, "cost", e.target.value)} placeholder="0.00" />
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-emerald-500 uppercase block mb-1">Цена клиенту (€)</label>
+                        <input type="number" className="w-full bg-emerald-50/50 border border-emerald-100 rounded-lg px-2 py-1.5 text-xs outline-none font-semibold text-emerald-700" value={ex.price} onChange={e => setExtraField(i, "price", e.target.value)} placeholder="0.00" />
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {isCoating && (
                     <div className="mt-3 p-3 bg-indigo-50/50 border border-indigo-100 rounded-lg grid grid-cols-2 gap-3">
@@ -516,12 +692,20 @@ export const OrderForm = ({
             <input type="number" min="0" className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:ring-2" value={form.prepayment} onChange={e => set("prepayment", e.target.value)} placeholder="0" />
           </div>
           <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Дата аванса</label>
+            <DateInput value={form.prepaymentDate} onChange={e => set("prepaymentDate", e.target.value)} />
+          </div>
+          <div>
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Способ аванса</label>
             <select className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none" value={form.paymentMethod} onChange={e => set("paymentMethod", e.target.value)}>
               {PAY_METHODS.map(m => <option key={m}>{m}</option>)}
             </select>
           </div>
           <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Дата полной оплаты</label>
+            <DateInput value={form.paymentDate} onChange={e => set("paymentDate", e.target.value)} />
+          </div>
+          <div className="sm:col-span-2">
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Способ доплаты</label>
             <select className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none" value={form.finalPaymentMethod} onChange={e => set("finalPaymentMethod", e.target.value)}>
               {PAY_METHODS.map(m => <option key={m}>{m}</option>)}
@@ -570,6 +754,45 @@ export const OrderForm = ({
         </div>
 
         {/* ╔══════════════════════════════════════════════════════════════════╗
+         * ║  БЛОК: ДОПОЛНИТЕЛЬНЫЕ КОММЕНТАРИИ                                 ║
+         * ╚══════════════════════════════════════════════════════════════════╝ */}
+        <div className="pt-4 border-t border-slate-100">
+          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 block">Дополнительные комментарии</label>
+          <textarea rows={3} placeholder="Любые важные примечания к заказу: источник клиента, особенности доставки, договорённости по срокам, что-то нестандартное..." className="w-full px-4 py-3 bg-amber-50/40 border border-amber-200 rounded-xl text-sm outline-none resize-none italic" value={form.comment || ""} onChange={e => set("comment", e.target.value)} />
+        </div>
+
+        {/* ╔══════════════════════════════════════════════════════════════════╗
+         * ║  БЛОК: ИТОГ ПРОЕКТА (металл и финальные веса)                    ║
+         * ╚══════════════════════════════════════════════════════════════════╝ */}
+        <div className="bg-gradient-to-br from-slate-50 to-blue-50/40 p-5 rounded-2xl border border-slate-200">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">⚖️ Итог проекта (металл и финальные веса)</h3>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div>
+              <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">Металл от клиента (g)</label>
+              <input type="number" step="0.01" placeholder="0.00" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" value={form.metalGiven || ""} onChange={e => set("metalGiven", e.target.value)} />
+            </div>
+            <div>
+              <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">Финальный вес изделия (g)</label>
+              <input type="number" step="0.01" placeholder="0.00" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" value={form.finalWeight || ""} onChange={e => set("finalWeight", e.target.value)} />
+            </div>
+            <div>
+              <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">Финальный вес с потерей (g)</label>
+              <input type="number" step="0.01" placeholder="0.00" className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" value={form.finalWeightWithLoss || ""} onChange={e => set("finalWeightWithLoss", e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-2 md:col-span-1">
+              <div>
+                <label className="text-[9px] font-bold text-emerald-600 uppercase block mb-1">Добавить клиенту (g)</label>
+                <input type="number" step="0.01" placeholder="0" className="w-full px-2 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-semibold text-emerald-700" value={form.finalToAdd || ""} onChange={e => set("finalToAdd", e.target.value)} />
+              </div>
+              <div>
+                <label className="text-[9px] font-bold text-rose-600 uppercase block mb-1">Вернуть клиенту (g)</label>
+                <input type="number" step="0.01" placeholder="0" className="w-full px-2 py-2 bg-rose-50 border border-rose-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-rose-500 font-semibold text-rose-700" value={form.finalToReturn || ""} onChange={e => set("finalToReturn", e.target.value)} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ╔══════════════════════════════════════════════════════════════════╗
          * ║  ИТОГОВЫЙ РАСЧЁТ: Резюме для клиента + Доход мастерской         ║
          * ║                                                                    ║
          * ║  ЛЕВАЯ КОЛОНКА — "Резюме для клиента":                           ║
@@ -589,14 +812,18 @@ export const OrderForm = ({
         <div className="bg-slate-900 text-white p-6 rounded-[24px] shadow-xl grid grid-cols-1 md:grid-cols-2 gap-8">
           <div className="space-y-3">
             <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 pb-2">Резюме для клиента</h4>
-            <div className="flex justify-between text-sm"><span>Стоимость работ:</span><span className="font-semibold">{fmt(calc.workTotal)}</span></div>
+            <div className="flex justify-between text-sm"><span>Стоимость изготовления:</span><span className="font-semibold">{fmt(calc.workTotal)}</span></div>
             <div className="flex justify-between text-sm"><span>Доп. позиции:</span><span className="font-semibold">{fmt(calc.extrasPrice)}</span></div>
             {form.vatEnabled && <div className="flex justify-between text-sm text-blue-400"><span>НДС 24%:</span><span className="font-semibold">+{fmt(calc.vat)}</span></div>}
             <div className="flex justify-between items-center pt-2 mt-2 border-t border-slate-800">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Итого клиенту</span>
               <span className="text-2xl font-serif text-emerald-400">{fmt(calc.clientTotalWithVat)}</span>
             </div>
-            {calc.balance > 0 && <div className="flex justify-between text-xs text-rose-300 font-bold mt-1"><span>Остаток к доплате:</span><span>{fmt(calc.balance)}</span></div>}
+            {form.paymentDate ? (
+              <div className="flex justify-between text-xs text-emerald-300 font-bold mt-1"><span>✓ Оплачено</span><span>{fmtDate(form.paymentDate)}</span></div>
+            ) : calc.balance > 0 ? (
+              <div className="flex justify-between text-xs text-rose-300 font-bold mt-1"><span>Остаток к доплате:</span><span>{fmt(calc.balance)}</span></div>
+            ) : null}
           </div>
 
           <div className="space-y-3">

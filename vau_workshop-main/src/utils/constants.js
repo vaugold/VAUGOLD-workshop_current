@@ -11,7 +11,7 @@ export const MASTERS = {
   KIRILL:    "Kirill",
   OLEG:      "Oleg",
   ASTAROT:   "Astarot",
-  SOFIA:     "Sofia",
+  SOFIA:     "Sofja",
   OUTSOURCE: "Outsource"
 };
 
@@ -54,7 +54,10 @@ export const MFG_TYPES_BILINGUAL = [
   ["Зажим для галстука",        "Lipsu klamber"],
   ["Брелок",                    "Võtmehoidja"],
   ["Столовое серебро",          "Lauahõbe"],
-  ["Сувенир",                   "Suveniir"]
+  ["Сувенир",                   "Suveniir"],
+  ["Литье",                     "Valamine"],
+  ["Опт. разработка мастер-модели", "Hulgi: käsitöö mudeli arendus"],
+  ["Опт. Изготовление",         "Hulgi: tootmine"]
 ];
 
 export const L24_BILINGUAL = [

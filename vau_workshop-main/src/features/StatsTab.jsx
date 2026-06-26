@@ -113,17 +113,17 @@ export const StatsTab = ({ orders = [], cncOrders = [], repairs = [], expenses =
 
   // --- ОПЛАТЫ ---
   const prepayByMethod = {};
-  safeFilter(intakeOrders, o => o.location !== "L24").forEach(o => { const m = o.paymentMethod || "Наличные"; const a = parseFloat(o.prepayment) || 0; if (a > 0) prepayByMethod[m] = (prepayByMethod[m] || 0) + a; });
+  safeFilter(intakeOrders, o => o.location !== "L24").forEach(o => { const m = o.paymentMethod || "Sularaha VAUGOLD"; const a = parseFloat(o.prepayment) || 0; if (a > 0) prepayByMethod[m] = (prepayByMethod[m] || 0) + a; });
   l24PrepaidOrders.forEach(o => { const m = "Перевод"; const a = parseFloat(o.l24Prepayment) || 0; if (a > 0) prepayByMethod[m] = (prepayByMethod[m] || 0) + a; });
-  intakeRepairs.forEach(r => { const m = r.paymentMethod || "Наличные"; const a = parseFloat(r.prepayment) || 0; if (a > 0) prepayByMethod[m] = (prepayByMethod[m] || 0) + a; });
+  intakeRepairs.forEach(r => { const m = r.paymentMethod || "Sularaha VAUGOLD"; const a = parseFloat(r.prepayment) || 0; if (a > 0) prepayByMethod[m] = (prepayByMethod[m] || 0) + a; });
 
   const finalByMethod = {};
   const finalPayOrders = [
     ...safeFilter(deliveredOrders, o => o.location !== "L24"),
     ...safeFilter(safeOrders, o => o && o.location === "L24" && o.paymentStatus === "Оплачено" && inPeriod(o.paymentDate) && !o.isDraft)
   ];
-  finalPayOrders.forEach(o => { const oc = safeCalcOrder(o); const m = o.finalPaymentMethod || "Наличные"; const a = o.location === "L24" ? (oc.l24Remaining || 0) : (oc.balance || 0); if (a > 0) finalByMethod[m] = (finalByMethod[m] || 0) + a; });
-  deliveredRepairs.forEach(r => { const m = r.finalPaymentMethod || "Наличные"; const a = (r.balanceWithVat || r.balance) || 0; if (a > 0) finalByMethod[m] = (finalByMethod[m] || 0) + a; });
+  finalPayOrders.forEach(o => { const oc = safeCalcOrder(o); const m = o.finalPaymentMethod || "Sularaha VAUGOLD"; const a = o.location === "L24" ? (oc.l24Remaining || 0) : (oc.balance || 0); if (a > 0) finalByMethod[m] = (finalByMethod[m] || 0) + a; });
+  deliveredRepairs.forEach(r => { const m = r.finalPaymentMethod || "Sularaha VAUGOLD"; const a = (r.balanceWithVat || r.balance) || 0; if (a > 0) finalByMethod[m] = (finalByMethod[m] || 0) + a; });
 
   const prepayments = Object.values(prepayByMethod).reduce((s, v) => s + v, 0);
   const finalPayments = Object.values(finalByMethod).reduce((s, v) => s + v, 0);
@@ -133,6 +133,54 @@ export const StatsTab = ({ orders = [], cncOrders = [], repairs = [], expenses =
   const payBreakdown = {};
   Object.entries(prepayByMethod).forEach(([m, v]) => { payBreakdown[m] = (payBreakdown[m] || 0) + v; });
   Object.entries(finalByMethod).forEach(([m, v]) => { payBreakdown[m] = (payBreakdown[m] || 0) + v; });
+
+  // === ПОСТУПЛЕНИЯ В КАССУ ПО ДНЯМ + ТИП ОПЛАТЫ ===
+  // Каждое поступление = { date, method, amount, type, orderId, orderTitle }
+  const cashflowEvents = [];
+  const pushEvent = (date, method, amount, type, orderId, orderTitle) => {
+    if (!date || amount <= 0) return;
+    cashflowEvents.push({ date, method: method || "Sularaha VAUGOLD", amount, type, orderId, orderTitle });
+  };
+
+  // Предоплаты по датам аванса
+  safeFilter(intakeOrders, o => o.location !== "L24").forEach(o => {
+    pushEvent(o.prepaymentDate, o.paymentMethod, parseFloat(o.prepayment), "Предоплата (заказ)", o.id, o.orderTitle || o.clientName);
+  });
+  l24PrepaidOrders.forEach(o => {
+    pushEvent(o.l24PrepaymentDate, "Перевод", parseFloat(o.l24Prepayment), "Предоплата L24", o.id, o.orderTitle || o.clientName);
+  });
+  intakeRepairs.forEach(r => {
+    pushEvent(r.prepaymentDate, r.paymentMethod, parseFloat(r.prepayment), "Предоплата (ремонт)", r.id, r.clientName);
+  });
+
+  // Доплаты по датам оплаты
+  finalPayOrders.forEach(o => {
+    const oc = safeCalcOrder(o);
+    const m = o.finalPaymentMethod || "Sularaha VAUGOLD";
+    const a = o.location === "L24" ? (oc.l24Remaining || 0) : (oc.balance || 0);
+    pushEvent(o.paymentDate || o.deliveryDate, m, a, o.location === "L24" ? "Оплата L24" : "Доплата (заказ)", o.id, o.orderTitle || o.clientName);
+  });
+  deliveredRepairs.forEach(r => {
+    const m = r.finalPaymentMethod || "Sularaha VAUGOLD";
+    const a = (r.balanceWithVat || r.balance) || 0;
+    pushEvent(r.paymentDate || r.deliveryDate, m, a, "Доплата (ремонт)", r.id, r.clientName);
+  });
+
+  // CNC оплаты по paymentDate
+  cncPaidMonth.forEach(o => {
+    pushEvent(o.paymentDate, "Перевод", safeCalcCNC(o).clientTotal, "Оплата CNC", o.id, o.item);
+  });
+
+  // Группируем по дате
+  const cashflowByDate = {};
+  cashflowEvents.forEach(e => {
+    if (!cashflowByDate[e.date]) cashflowByDate[e.date] = { total: 0, methods: {}, events: [] };
+    cashflowByDate[e.date].total += e.amount;
+    cashflowByDate[e.date].methods[e.method] = (cashflowByDate[e.date].methods[e.method] || 0) + e.amount;
+    cashflowByDate[e.date].events.push(e);
+  });
+  // Сортируем даты по убыванию (свежие сверху)
+  const cashflowDates = Object.keys(cashflowByDate).sort((a, b) => b.localeCompare(a));
 
   // --- РАСХОДЫ И ПРИБЫЛЬ ---
   const expData = safeExpenses[month] || {};
@@ -348,7 +396,7 @@ export const StatsTab = ({ orders = [], cncOrders = [], repairs = [], expenses =
           {[
             ["summary", "Резюме"], ["finance", "Оплаты"], ["sources", "Источники"], 
             ["services", "Изделия"], ["employees", "Мастера"], ["locations", "Точки"], 
-            ["timing", "Сроки"], ["cnc", "CNC"]
+            ["timing", "Сроки"], ["cnc", "CNC"], ["kassa", "💰 Касса"]
           ].map(([id, lbl]) => (
             <button 
               key={id} 
@@ -460,7 +508,7 @@ export const StatsTab = ({ orders = [], cncOrders = [], repairs = [], expenses =
                   <tr><th className="p-3">Способ</th><th className="p-3 text-right">Предоплаты</th><th className="p-3 text-right">Доплаты (Выдача)</th><th className="p-3 text-right">Итого</th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {["Наличные", "Карта", "По банку", "Перевод"].map(m => {
+                  {["Sularaha VAUGOLD", "Sularaha EM", "Kaart VAUGOLD", "Kaart EM", "Pank VAUGOLD", "Pank EM", "Перевод"].map(m => {
                     const pre = prepayByMethod[m] || 0; const fin = finalByMethod[m] || 0;
                     if (!pre && !fin) return null;
                     return (
@@ -481,6 +529,96 @@ export const StatsTab = ({ orders = [], cncOrders = [], repairs = [], expenses =
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {stab === "kassa" && (
+          <div className="space-y-6 animate-fade-in">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xs font-bold text-slate-400 tracking-wider uppercase">💰 Поступления в кассу по дням ({periodLabel})</h3>
+              <div className="text-[10px] text-slate-400 italic">Группировка: дата → способ оплаты. Кликни строку — увидишь расшифровку.</div>
+            </div>
+
+            {/* Итого за период */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="bg-slate-900 p-4 rounded-2xl shadow-lg col-span-2 md:col-span-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">ИТОГО ЗА ПЕРИОД</span>
+                <span className="text-2xl font-black text-emerald-400 block mt-1">{fmt(totalPaymentsIn)}</span>
+              </div>
+              {[
+                ["Sularaha VAUGOLD", "🟡 Sularaha VAUGOLD"],
+                ["Sularaha EM", "🔵 Sularaha EM"],
+                ["Kaart VAUGOLD", "🟡 Kaart VAUGOLD"],
+                ["Kaart EM", "🔵 Kaart EM"],
+                ["Pank VAUGOLD", "🟡 Pank VAUGOLD"],
+                ["Pank EM", "🔵 Pank EM"]
+              ].map(([m, lbl]) => (
+                <div key={m} className="bg-white border border-slate-200 p-4 rounded-2xl shadow-sm">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">{lbl}</span>
+                  <span className="text-xl font-black text-slate-800 block mt-1">{fmt(payBreakdown[m] || 0)}</span>
+                </div>
+              ))}
+            </div>
+
+            {cashflowDates.length === 0 ? (
+              <div className="bg-white rounded-3xl p-12 text-center border border-slate-100">
+                <span className="text-4xl block mb-3">💸</span>
+                <p className="text-slate-400 font-medium">Нет поступлений в этом периоде</p>
+              </div>
+            ) : (
+              <div className="overflow-hidden border border-slate-200 rounded-2xl shadow-sm">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs text-slate-500 font-medium border-b border-slate-200">
+                    <tr>
+                      <th className="p-3">Дата</th>
+                      <th className="p-3 text-right">Sularaha VG</th>
+                      <th className="p-3 text-right">Sularaha EM</th>
+                      <th className="p-3 text-right">Kaart VG</th>
+                      <th className="p-3 text-right">Kaart EM</th>
+                      <th className="p-3 text-right">Pank VG</th>
+                      <th className="p-3 text-right">Pank EM</th>
+                      <th className="p-3 text-right">Итого</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {cashflowDates.map(d => {
+                      const day = cashflowByDate[d];
+                      return (
+                        <tr key={d} className="hover:bg-slate-50 cursor-pointer" onClick={() => setStatModal({
+                          title: `💰 Касса за ${fmtDate(d)}`,
+                          items: day.events.map(e => ({
+                            label: `${e.orderTitle || "(без названия)"} — ${e.type}`,
+                            sub: e.method,
+                            amount: e.amount
+                          }))
+                        })}>
+                          <td className="p-3 font-semibold text-slate-700">{fmtDate(d)}</td>
+                          <td className="p-3 text-right text-slate-500">{day.methods["Sularaha VAUGOLD"] ? fmt(day.methods["Sularaha VAUGOLD"]) : "—"}</td>
+                          <td className="p-3 text-right text-slate-500">{day.methods["Sularaha EM"] ? fmt(day.methods["Sularaha EM"]) : "—"}</td>
+                          <td className="p-3 text-right text-slate-500">{day.methods["Kaart VAUGOLD"] ? fmt(day.methods["Kaart VAUGOLD"]) : "—"}</td>
+                          <td className="p-3 text-right text-slate-500">{day.methods["Kaart EM"] ? fmt(day.methods["Kaart EM"]) : "—"}</td>
+                          <td className="p-3 text-right text-slate-500">{day.methods["Pank VAUGOLD"] ? fmt(day.methods["Pank VAUGOLD"]) : "—"}</td>
+                          <td className="p-3 text-right text-slate-500">{day.methods["Pank EM"] ? fmt(day.methods["Pank EM"]) : "—"}</td>
+                          <td className="p-3 text-right font-bold text-emerald-600">{fmt(day.total)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="bg-slate-100 border-t-2 border-slate-300 text-xs">
+                    <tr>
+                      <td className="p-3 font-bold text-slate-800 uppercase">Итого за {periodLabel}</td>
+                      <td className="p-3 text-right font-bold text-slate-800">{payBreakdown["Sularaha VAUGOLD"] ? fmt(payBreakdown["Sularaha VAUGOLD"]) : "—"}</td>
+                      <td className="p-3 text-right font-bold text-slate-800">{payBreakdown["Sularaha EM"] ? fmt(payBreakdown["Sularaha EM"]) : "—"}</td>
+                      <td className="p-3 text-right font-bold text-slate-800">{payBreakdown["Kaart VAUGOLD"] ? fmt(payBreakdown["Kaart VAUGOLD"]) : "—"}</td>
+                      <td className="p-3 text-right font-bold text-slate-800">{payBreakdown["Kaart EM"] ? fmt(payBreakdown["Kaart EM"]) : "—"}</td>
+                      <td className="p-3 text-right font-bold text-slate-800">{payBreakdown["Pank VAUGOLD"] ? fmt(payBreakdown["Pank VAUGOLD"]) : "—"}</td>
+                      <td className="p-3 text-right font-bold text-slate-800">{payBreakdown["Pank EM"] ? fmt(payBreakdown["Pank EM"]) : "—"}</td>
+                      <td className="p-3 text-right font-black text-emerald-600">{fmt(totalPaymentsIn)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
           </div>
         )}
 

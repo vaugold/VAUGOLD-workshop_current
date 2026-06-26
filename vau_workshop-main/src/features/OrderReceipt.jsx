@@ -7,7 +7,14 @@ import { MFG_TYPES_BILINGUAL } from '../utils/constants';
 // Эстонские/английские переводы типов оплаты
 const T = {
   et: {
-    payMethod: { "Наличные": "Sularaha", "Карта": "Kaardimakse", "По банку": "Pangaülekanne" },
+    payMethod: {
+      "Sularaha VAUGOLD": "Sularaha",
+      "Sularaha EM": "Sularaha",
+      "Kaart VAUGOLD": "Kaardimakse",
+      "Kaart EM": "Kaardimakse",
+      "Pank VAUGOLD": "Pangaülekanne",
+      "Pank EM": "Pangaülekanne"
+    },
     metal: "Antud metall",
     comment: "Märkus",
     extras: "Lisad",
@@ -21,7 +28,14 @@ const T = {
     phone: "Tel"
   },
   en: {
-    payMethod: { "Наличные": "Cash", "Карта": "Card", "По банку": "Bank transfer" },
+    payMethod: {
+      "Sularaha VAUGOLD": "Cash",
+      "Sularaha EM": "Cash",
+      "Kaart VAUGOLD": "Card",
+      "Kaart EM": "Card",
+      "Pank VAUGOLD": "Bank transfer",
+      "Pank EM": "Bank transfer"
+    },
     metal: "Metal given",
     comment: "Comment",
     extras: "Extras",

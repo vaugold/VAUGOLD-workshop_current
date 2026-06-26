@@ -150,17 +150,36 @@ export const RepairStatsTab = ({ repairs = [] }) => {
   }, [intake, delivered]);
 
   // 4. По мастерам
+  // Хелпер: достать мастеров из позиции (новая структура masters[] с миграцией со старой)
+  const getItemMasters = (it) => {
+    if (Array.isArray(it.masters) && it.masters.length > 0) return it.masters;
+    if (it.masterName || it.price) return [{ name: it.masterName || "", cost: it.price || "", outsourceCost: "" }];
+    return [];
+  };
+
   const byMaster = useMemo(() => {
     const m = {};
     intake.forEach(r => {
       (r.items || []).forEach(it => {
-        const master = it.masterName || "";
-        if (!master || master === MASTERS.OUTSOURCE) return;
-        if (!m[master]) m[master] = { count: 0, total: 0, delivered: 0 };
-        m[master].count++;
-        m[master].total += parseFloat(it.price) || 0;
-        
-        // Учитываем покрытие
+        const itemMasters = getItemMasters(it);
+        // Считаем статистику по разбивке мастеров
+        if (itemMasters.length > 0) {
+          itemMasters.forEach(mstr => {
+            const name = (mstr.name || "").trim();
+            if (!name || name === MASTERS.OUTSOURCE) return; // аутсорс не идёт в доход мастеров
+            if (!m[name]) m[name] = { count: 0, total: 0, delivered: 0 };
+            m[name].count++;
+            m[name].total += parseFloat(mstr.cost) || 0;
+          });
+        } else {
+          // Fallback на старую структуру (если masters отсутствует и нет masterName/price)
+          const master = (it.masterName || "").trim();
+          if (!master || master === MASTERS.OUTSOURCE) return;
+          if (!m[master]) m[master] = { count: 0, total: 0, delivered: 0 };
+          m[master].count++;
+          m[master].total += parseFloat(it.price) || 0;
+        }
+        // Учитываем покрытие (не зависит от разбивки, это из extras)
         (it.extras || []).forEach(ex => {
           const cm = ex.coatingMaster;
           if (!cm || cm === MASTERS.OUTSOURCE) return;
@@ -173,8 +192,13 @@ export const RepairStatsTab = ({ repairs = [] }) => {
       });
     });
     delivered.forEach(r => {
-      const masters = [...new Set((r.items || []).map(it => it.masterName).filter(Boolean))];
-      masters.forEach(master => {
+      const mastersAll = new Set();
+      (r.items || []).forEach(it => {
+        getItemMasters(it).forEach(mstr => { if (mstr.name) mastersAll.add(mstr.name); });
+        if (it.masterName) mastersAll.add(it.masterName);
+      });
+      mastersAll.forEach(master => {
+        if (!master || master === MASTERS.OUTSOURCE) return;
         if (!m[master]) m[master] = { count: 0, total: 0, delivered: 0 };
         m[master].delivered++;
       });
@@ -399,11 +423,22 @@ export const RepairStatsTab = ({ repairs = [] }) => {
                       {byMaster.map(([m, v]) => (
                         <tr key={m} className="hover:bg-slate-50 cursor-pointer" onClick={() => setStatModal({
                           title: `🔧 Работы мастера: ${m}`,
-                          items: intake.map(r => {
-                            const match = (r.items || []).find(it => it.masterName === m);
-                            if (!match) return null;
-                            return { label: r.clientName || "Без имени", sub: match.type, amount: match.price };
-                          }).filter(Boolean)
+                          items: intake.flatMap(r => {
+                            const matched = [];
+                            (r.items || []).forEach(it => {
+                              const itemMasters = getItemMasters(it);
+                              itemMasters.forEach(mstr => {
+                                if ((mstr.name || "").trim() === m) {
+                                  matched.push({ label: r.clientName || "Без имени", sub: it.type, amount: mstr.cost });
+                                }
+                              });
+                              // Fallback: старая структура
+                              if (itemMasters.length === 0 && it.masterName === m) {
+                                matched.push({ label: r.clientName || "Без имени", sub: it.type, amount: it.price });
+                              }
+                            });
+                            return matched;
+                          })
                         })}>
                           <td className="p-3 font-semibold text-slate-700">{m}</td>
                           <td className="p-3 text-slate-500">{v.count}</td>

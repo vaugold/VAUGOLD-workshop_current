@@ -73,16 +73,19 @@ export const generateId = () => {
  * Генерация номера заказа/ремонта по шаблону:
  * {PREFIX}{YYMMDD}{SEQUENCE}
  * - VG = Администратор/Суперпользователь
- * - EM = Мастер
- * Пример: VG26052601, EM26052602
+ * - EM = Мастер Sikupilli
+ * - OM = Мастер Vaugold (ИСПРАВЛЕНО 2026-06-27: новый мастер на точке Vaugold)
+ * Пример: VG26052601, EM26052602, OM26052601
  *
  * @param {Array} existingOrders - список существующих заказов/ремонтов
- * @param {string} userRole - роль пользователя ('superuser' или 'master')
+ * @param {string} userRole - роль пользователя ('superuser' | 'master_sikupilli' | 'master_vaugold')
  * @returns {string} - сгенерированный номер заказа
  */
 export const generateOrderNumber = (existingOrders = [], userRole = 'superuser') => {
-  // Определяем префикс по роли
-  const prefix = userRole === 'master_sikupilli' ? 'EM' : 'VG';
+  // ИСПРАВЛЕНО 2026-06-27: добавлен префикс OM для нового мастера на точке Vaugold
+  let prefix = 'VG';
+  if (userRole === 'master_sikupilli') prefix = 'EM';
+  else if (userRole === 'master_vaugold') prefix = 'OM';
 
   // Текущая дата в формате YYMMDD
   const now = new Date();

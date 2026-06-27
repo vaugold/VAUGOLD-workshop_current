@@ -223,6 +223,7 @@ const createEmptyRepair = (orderNumber = "", userRole = 'superuser') => ({
   courierVauSiku: false,           // Ожидает курьера VAU → Sikupilli
   courierSikuVau: false,           // Ожидает курьера Sikupilli → VAU
   awaitingClient: false,           // Ожидает клиента (авто-сбрасывается при выдаче)
+  // ИСПРАВЛЕНО 2026-06-27: добавлена поддержка master_vaugold (точка Vaugold по умолчанию)
   location: userRole === 'master_sikupilli' ? 'Sikupilli' : 'Vaugold',
   pickupPoint: userRole === 'master_sikupilli' ? 'Sikupilli' : 'Vaugold',
   isRepeat: "Новый",
@@ -236,7 +237,7 @@ const createEmptyRepair = (orderNumber = "", userRole = 'superuser') => ({
 });
 
 
-export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = [], sources = [], onOpenViewer }) => {
+export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = [], sources = [], ensureOrderImages, onOpenViewer }) => {
   // Получаем текущего пользователя для генерации номера заказа
   const { currentUser, isSuperuser } = useAuth();
 
@@ -509,6 +510,12 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
     setExpandedId(null);
     clearDraft(); // Очищаем автосохранение при редактировании
     window.scrollTo({ top: 0, behavior: "smooth" });
+    // ИСПРАВЛЕНО 2026-06-27: ленивая загрузка фото при открытии ремонта на редактирование
+    if (ensureOrderImages && r.id) {
+      ensureOrderImages(r.id).then(imgs => {
+        if (imgs && imgs.length > 0) setForm(prev => ({...prev, images: imgs}));
+      });
+    }
   };
 
   const deleteRepair = id => {
@@ -1053,7 +1060,12 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
               const isDelivered = r.receptionStatus === 'Выдано клиенту';
               return (
                 <div key={r.id} className={`bg-white rounded-[20px] shadow-sm border overflow-hidden transition-all ${isDelivered ? 'border-slate-100 opacity-55' : isDraft ? 'border-dashed border-slate-300 opacity-80' : 'border-slate-100 hover:shadow-md'}`}>
-                  <div className="p-5 cursor-pointer flex flex-col md:flex-row gap-4 items-start md:items-center justify-between" onClick={() => setExpandedId(isExp ? null : r.id)}>
+                  <div className="p-5 cursor-pointer flex flex-col md:flex-row gap-4 items-start md:items-center justify-between" onClick={() => {
+                    const nextId = isExp ? null : r.id;
+                    setExpandedId(nextId);
+                    // ИСПРАВЛЕНО 2026-06-27: догружаем фото при раскрытии ремонта
+                    if (nextId && ensureOrderImages) ensureOrderImages(nextId);
+                  }}>
 
                     <div className="flex items-center gap-4">
                       <div className="w-14 h-14 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center shrink-0 text-2xl text-slate-300">🔧</div>

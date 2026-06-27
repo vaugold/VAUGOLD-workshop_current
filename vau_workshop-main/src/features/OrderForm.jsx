@@ -74,7 +74,9 @@ const createEmptyOrder = (orderNumber = "") => ({
 export const OrderForm = ({
   orders = [], saveOrder, updateOrder, editingOrder = null, onCancelEdit,
   customTypes = [], sources = [],
-  allRepairs = [], allCnc = [], onOpenViewer
+  allRepairs = [], allCnc = [],
+  ensureOrderImages, // ИСПРАВЛЕНО 2026-06-27: ленивая загрузка фото
+  onOpenViewer
 }) => {
   // Получаем текущего пользователя для генерации номера заказа
   const { currentUser } = useAuth();
@@ -105,6 +107,17 @@ export const OrderForm = ({
       setForm(draft);
     }
   }, [draft, isEditing]);
+
+  // ИСПРАВЛЕНО 2026-06-27: при открытии заказа на редактирование — ленивая загрузка фото
+  useEffect(() => {
+    if (isEditing && editingOrder?.id && ensureOrderImages) {
+      ensureOrderImages(editingOrder.id).then(imgs => {
+        if (imgs && imgs.length > 0) {
+          setForm(prev => ({...prev, images: imgs}));
+        }
+      });
+    }
+  }, [isEditing, editingOrder?.id, ensureOrderImages]);
 
   // === АВТО-ЗАПОЛНЕНИЕ для старых заказов ===
   // 1) productionCost пуст → заполняем = сумма этапов + наценка

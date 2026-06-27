@@ -1,5 +1,5 @@
 // src/features/OrdersTab.jsx
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { fmt, fmtDate, oStatus, mKey, mLabel, todayStr } from '../utils/helpers';
 import { useAuth } from '../context/AuthContext';
 import { calcOrder } from '../utils/calculations';
@@ -7,9 +7,15 @@ import { calcOrder } from '../utils/calculations';
 /**
  * ЖУРНАЛ ЗАКАЗОВ — только список заказов (изготовление).
  * Сама форма создания/редактирования заказа вынесена в OrderForm.jsx
+ *
+ * ИСПРАВЛЕНО 2026-06-27: ленивая загрузка фото для видимых заказов.
+ * Не грузим ВСЕ фото сразу (было 19 MB на каждое открытие вкладки),
+ * а только для первых 30 видимых + при раскрытии конкретного заказа.
  */
 export const OrdersTab = ({
-  orders = [], setOrders, deleteOrder, onOpenViewer, onEditOrder, onOpenReceipt
+  orders = [], setOrders, deleteOrder,
+  ensureOrderImages, ensureOrderImagesBulk, // ИСПРАВЛЕНО 2026-06-27
+  onOpenViewer, onEditOrder, onOpenReceipt
 }) => {
   const { isSuperuser } = useAuth();
   const [expandedId, setExpandedId] = useState(null);
@@ -98,6 +104,20 @@ export const OrdersTab = ({
     // Сортируем: новые сверху
     return list.sort((a, b) => (b.orderDate || "") > (a.orderDate || "") ? 1 : -1);
   }, [orders, statusFilter, search, periodMode, periodYear, periodMonth]);
+
+  // ИСПРАВЛЕНО 2026-06-27: ленивая загрузка фото для видимых заказов (первые 30)
+  // + при раскрытии конкретного заказа — догружаем именно его
+  useEffect(() => {
+    if (!ensureOrderImagesBulk) return;
+    const visibleIds = filteredOrders.slice(0, 30).map(o => o.id);
+    ensureOrderImagesBulk(visibleIds);
+  }, [filteredOrders, ensureOrderImagesBulk]);
+
+  useEffect(() => {
+    if (expandedId && ensureOrderImages) {
+      ensureOrderImages(expandedId);
+    }
+  }, [expandedId, ensureOrderImages]);
 
   return (
     <div className="space-y-8 animate-fade-in">

@@ -1,29 +1,60 @@
 // src/context/AuthContext.jsx
+// Контекст авторизации. Использует dataAdapter для работы с пользователями (таблица users).
+//
+// ОТКАТ 2026-06-27: возврат к кастомной авторизации (plaintext в users.password_hash).
+// Supabase Auth + RLS отключены — вернулись к схеме, которая работает «из коробки» без миграций.
+
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { supabase } from '../services/supabase';
+import { loadArray, saveArray } from '../services/dataAdapter';
 
 const AuthContext = createContext(null);
 
 // Роли пользователей
 export const ROLES = {
   SUPERUSER: 'superuser',        // Владелец - полный доступ
-  MASTER_SIKUPILLI: 'master_sikupilli'  // Мастер Sikupilli - только ремонты и клиенты
+  MASTER_SIKUPILLI: 'master_sikupilli',  // Мастер Sikupilli - квитанции EM, точка Sikupilli
+  MASTER_VAUGOLD: 'master_vaugold'       // ИСПРАВЛЕНО 2026-06-27: Мастер Vaugold - квитанции OM, точка Vaugold
+};
+
+// ИСПРАВЛЕНО 2026-06-27: workaround для CHECK constraint в БД.
+// В БД у нас роль хранится одна (master_sikupilli), а реальная роль определяется по username.
+// Это позволяет не делать ALTER TABLE / DROP CONSTRAINT.
+// Чтобы добавить нового мастера: добавить username → ROLES ниже.
+const USERNAME_TO_ROLE = {
+  'vaugold': ROLES.MASTER_VAUGOLD,
+  'sikupilli': ROLES.MASTER_SIKUPILLI,
+  'user_om': ROLES.MASTER_VAUGOLD,         // legacy алиас
+  'user123': ROLES.MASTER_SIKUPILLI,       // legacy алиас
+};
+
+const applyRoleOverride = (user) => {
+  if (!user) return user;
+  const realRole = USERNAME_TO_ROLE[user.username];
+  if (realRole) return { ...user, role: realRole };
+  return user;
 };
 
 // Дефолтные пользователи (используются как fallback, если БД недоступна)
 // ВАЖНО: при любых изменениях паролей — обновлять здесь тоже!
+// id здесь нет — для fallback; в БД у пользователей есть свои UUID.
 const DEFAULT_USERS = [
   {
     username: 'admin',
-    password: 'odindvatri',  // Актуальный пароль админа (должен совпадать с БД)
+    password: '789',             // ИСПРАВЛЕНО 2026-06-27: пароль изменён
     role: ROLES.SUPERUSER,
     name: 'Администратор'
   },
   {
-    username: 'user123',
-    password: '123123123',
+    username: 'sikupilli',       // ИСПРАВЛЕНО 2026-06-27: переименован user123 → sikupilli
+    password: '1122',
     role: ROLES.MASTER_SIKUPILLI,
-    name: 'masterok'
+    name: 'мастер Sikupilli'
+  },
+  {
+    username: 'vaugold',         // ИСПРАВЛЕНО 2026-06-27: переименован user_om → vaugold
+    password: '1122',
+    role: ROLES.MASTER_VAUGOLD,
+    name: 'мастер Vaugold'
   }
 ];
 const DEFAULT_SUPERUSER = DEFAULT_USERS[0]; // Для обратной совместимости
@@ -33,34 +64,27 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [allUsers, setAllUsers] = useState([]);
 
-  // Загрузка списка пользователей из Supabase
+  // Загрузка списка пользователей из Supabase (через адаптер → таблица users)
   const loadUsers = useCallback(async () => {
     try {
-      const { data } = await supabase
-        .from('settings')
-        .select('data')
-        .eq('key', 'ws_users_v1')
-        .single();
-
-      if (data?.data && Array.isArray(data.data)) {
-        setAllUsers(data.data);
-      } else {
-        // Если нет пользователей, создаем дефолтных
-        await saveUsers(DEFAULT_USERS);
-        setAllUsers(DEFAULT_USERS);
+      const data = await loadArray('ws_users_v1');
+      const list = Array.isArray(data) && data.length > 0 ? data : DEFAULT_USERS;
+      // ИСПРАВЛЕНО 2026-06-27: применяем role override ко всем юзерам (для UI UserManagement)
+      setAllUsers(list.map(applyRoleOverride));
+      if (!Array.isArray(data) || data.length === 0) {
+        await saveArray('ws_users_v1', DEFAULT_USERS);
       }
     } catch (e) {
       console.error('Load users error:', e);
-      // Fallback: используем встроенных дефолтных пользователей (если БД недоступна)
-      setAllUsers(DEFAULT_USERS);
+      setAllUsers(DEFAULT_USERS.map(applyRoleOverride));
     }
   }, []);
 
-  // Сохранение списка пользователей
+  // Сохранение списка пользователей (через адаптер)
   const saveUsers = async (users) => {
     window._savingCount = (window._savingCount || 0) + 1;
     try {
-      await supabase.from('settings').upsert({ key: 'ws_users_v1', data: users }, { onConflict: 'key' });
+      await saveArray('ws_users_v1', users);
       setAllUsers(users);
     } catch (e) {
       console.error('Save users error:', e);
@@ -72,7 +96,6 @@ export const AuthProvider = ({ children }) => {
   // Проверка сохраненной сессии при загрузке
   useEffect(() => {
     let cancelled = false;
-    // Safety net: даже если loadUsers() зависнет, через 4 секунды покажем LoginPage
     const safetyTimeout = setTimeout(() => {
       if (!cancelled) {
         console.warn('[Auth] Safety timeout — показываем LoginPage');
@@ -82,7 +105,6 @@ export const AuthProvider = ({ children }) => {
 
     const initAuth = async () => {
       try {
-        // Загружаем пользователей с таймаутом 3 секунды
         await Promise.race([
           loadUsers(),
           new Promise((_, reject) => setTimeout(() => reject(new Error('loadUsers timeout')), 3000))
@@ -116,12 +138,12 @@ export const AuthProvider = ({ children }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Обновляем текующего пользователя когда загрузились пользователи
   useEffect(() => {
     if (allUsers.length > 0 && currentUser) {
       const updated = allUsers.find(u => u.username === currentUser.username);
       if (updated && JSON.stringify(updated) !== JSON.stringify(currentUser)) {
-        setCurrentUser(updated);
+        // ИСПРАВЛЕНО 2026-06-27: применяем role override при восстановлении сессии
+        setCurrentUser(applyRoleOverride(updated));
         const session = localStorage.getItem('vaugold_session');
         if (session) {
           const parsed = JSON.parse(session);
@@ -131,27 +153,26 @@ export const AuthProvider = ({ children }) => {
     }
   }, [allUsers]);
 
-  // Вход
   const login = async (username, password) => {
     const users = allUsers.length > 0 ? allUsers : DEFAULT_USERS;
     const user = users.find(u => u.username === username && u.password === password);
 
     if (user) {
-      localStorage.setItem('vaugold_session', JSON.stringify({ username: user.username }));
-      setCurrentUser(user);
+      // ИСПРАВЛЕНО 2026-06-27: применяем role override по username
+      const finalUser = applyRoleOverride(user);
+      localStorage.setItem('vaugold_session', JSON.stringify({ username: finalUser.username }));
+      setCurrentUser(finalUser);
       return { success: true };
     }
 
     return { success: false, error: 'Неверное имя пользователя или пароль' };
   };
 
-  // Выход
   const logout = () => {
     localStorage.removeItem('vaugold_session');
     setCurrentUser(null);
   };
 
-  // Регистрация нового пользователя (только для суперпользователя)
   const registerUser = async (userData) => {
     if (currentUser?.role !== ROLES.SUPERUSER) {
       return { success: false, error: 'Нет прав для регистрации' };
@@ -163,17 +184,16 @@ export const AuthProvider = ({ children }) => {
       return { success: false, error: 'Пользователь с таким именем уже существует' };
     }
 
-    const newUser = {
-      ...userData,
-      role: ROLES.MASTER_SIKUPILLI
-    };
+    // ИСПРАВЛЕНО 2026-06-27: при регистрации сохраняем выбранную роль (а не всегда MASTER_SIKUPILLI)
+    const newUser = { ...userData, role: userData.role || ROLES.MASTER_SIKUPILLI };
 
     users.push(newUser);
     await saveUsers(users);
+    // Перезагружаем — чтобы получить UUID, сгенерированный БД для нового юзера
+    await loadUsers();
     return { success: true };
   };
 
-  // Редактирование пользователя (только для суперпользователя)
   const updateUser = async (username, updates) => {
     if (currentUser?.role !== ROLES.SUPERUSER) {
       return { success: false, error: 'Нет прав для редактирования' };
@@ -183,15 +203,12 @@ export const AuthProvider = ({ children }) => {
       u.username === username ? { ...u, ...updates } : u
     );
     await saveUsers(users);
-
-    if (currentUser.username === username) {
-      setCurrentUser(users.find(u => u.username === username));
-    }
+    // Перезагружаем — чтобы подтянуть актуальное состояние
+    await loadUsers();
 
     return { success: true };
   };
 
-  // Удаление пользователя (только для суперпользователя)
   const deleteUser = async (username) => {
     if (currentUser?.role !== ROLES.SUPERUSER) {
       return { success: false, error: 'Нет прав для удаления' };
@@ -203,11 +220,14 @@ export const AuthProvider = ({ children }) => {
 
     const users = allUsers.filter(u => u.username !== username);
     await saveUsers(users);
+    await loadUsers();
     return { success: true };
   };
 
   const isSuperuser = currentUser?.role === ROLES.SUPERUSER;
   const isMasterSikupilli = currentUser?.role === ROLES.MASTER_SIKUPILLI;
+  const isMasterVaugold = currentUser?.role === ROLES.MASTER_VAUGOLD; // ИСПРАВЛЕНО 2026-06-27
+  const isAnyMaster = isMasterSikupilli || isMasterVaugold;            // ИСПРАВЛЕНО 2026-06-27: общий флаг "это мастер"
 
   return (
     <AuthContext.Provider value={{
@@ -221,6 +241,8 @@ export const AuthProvider = ({ children }) => {
       deleteUser,
       isSuperuser,
       isMasterSikupilli,
+      isMasterVaugold,      // ИСПРАВЛЕНО 2026-06-27
+      isAnyMaster,          // ИСПРАВЛЕНО 2026-06-27
       reloadUsers: loadUsers
     }}>
       {children}

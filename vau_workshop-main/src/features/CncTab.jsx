@@ -2,6 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { fmt, fmtDate, generateId, todayStr, oStatus, isDone } from '../utils/helpers';
 import { calcCNC } from '../utils/calculations';
+import { MASTERS } from '../utils/constants';
 
 import DateInput from '../components/DateInput';
 
@@ -26,7 +27,9 @@ export const CncTab = ({
   cncOrders = [], setCncOrders,
   cncClients = [], setCncClients,
   cncItems = [], setCncItems,
-  orders = [], updateOrder, editOrder, onOpenViewer
+  orders = [], updateOrder, editOrder,
+  ensureOrderImages, // ИСПРАВЛЕНО 2026-06-27
+  onOpenViewer
 }) => {
   const [form, setForm] = useState(emptyCNC());
   const [view, setView] = useState("list");

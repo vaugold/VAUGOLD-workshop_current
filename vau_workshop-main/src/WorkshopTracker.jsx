@@ -2,11 +2,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import useStorage from './hooks/useStorage';
 import { supabase } from './services/supabase';
+import { loadAllImages, loadImagesForOrder, saveImages as adapterSaveImages, deleteImages as adapterDeleteImages } from './services/dataAdapter';
 import { useAuth, ROLES } from './context/AuthContext';
 
 // Компоненты UI
 import ImageViewer from './components/ImageViewer';
 import SaveStatus from './components/SaveStatus';
+import { OrdersSkeleton, RepairsSkeleton, Spinner } from './components/Loading';
 
 // Вкладки
 import LoginPage from './features/LoginPage';
@@ -25,7 +27,7 @@ import { INITIAL_PROVIDERS } from './utils/constants';
 
 export const WorkshopTracker = () => {
   // === АВТОРИЗАЦИЯ ===
-  const { currentUser, loading, logout, isSuperuser, isMasterSikupilli } = useAuth();
+  const { currentUser, loading, logout, isSuperuser, isMasterSikupilli, isMasterVaugold, isAnyMaster } = useAuth();
 
   // Управление навигацией и просмотрщиком фото
   const [tab, setTab] = useState("repairs");
@@ -36,9 +38,10 @@ export const WorkshopTracker = () => {
 
   // --- ГЛОБАЛЬНЫЕ СТЕЙТЫ (Связь с базой данных Supabase) ---
   // Внимание: важно не менять ключи 'ws_orders_v5' и прочие, иначе потеряется связь со старыми данными
-  const [orders, setOrders] = useStorage("ws_orders_v5", []);
-  const [repairs, setRepairs] = useStorage("ws_repairs_v1", []);
-  const [cncOrders, setCncOrders] = useStorage("ws_cnc_v1", []); 
+  // ИСПРАВЛЕНО 2026-06-27: useStorage теперь возвращает 4-е значение reload() для ручного обновления
+  const [orders, setOrders, ordersLoaded, reloadOrders] = useStorage("ws_orders_v5", []);
+  const [repairs, setRepairs, repairsLoaded, reloadRepairs] = useStorage("ws_repairs_v1", []);
+  const [cncOrders, setCncOrders] = useStorage("ws_cnc_v1", []);
   const [cncClients, setCncClients] = useStorage("ws_cnc_clients_v1", []);
   const [cncItems, setCncItems] = useStorage("ws_cnc_items_v1", []);
   const [customTypes, setCustomTypes] = useStorage("ws_custom_types_v1", []);
@@ -51,6 +54,7 @@ export const WorkshopTracker = () => {
   // по ключам ws_img_v1_IDЗАКАЗА
   const [orderImages, setOrderImages] = useState({});
   const [migrating, setMigrating] = useState(false);
+  const [refreshing, setRefreshing] = useState(false); // ИСПРАВЛЕНО: индикатор ручного refresh
 
   // Утилитная функция для глобальных статусов сохранения (UI индикатор)
   const pushSaveStatus = (state, msg = '') => {
@@ -58,36 +62,80 @@ export const WorkshopTracker = () => {
     (window._saveListeners || []).forEach(fn => { try { fn(state, msg); } catch(e) {} });
   };
 
-  // 1. Асинхронная загрузка всех фотографий при старте приложения
+  // 1. Загрузка фотографий.
+  // ИСПРАВЛЕНО 2026-06-27 v2: убрана массовая загрузка ВСЕХ фото (19 MB!) — перешли на ленивую
+  // загрузку по требованию через ensureOrderImages(id). Фото грузятся только для открытого/расширенного заказа.
   useEffect(() => {
-    const loadAllImages = async () => {
-      try {
-        const { data, error } = await supabase.from('settings').select('key, data').like('key', 'ws_img_v1_%');
-        if (error) throw error;
-        if (data && data.length > 0) {
-          const imgs = {};
-          data.forEach(row => {
-            const id = row.key.replace('ws_img_v1_', '');
-            imgs[id] = row.data;
-          });
-          setOrderImages(imgs);
-        }
-      } catch(e) { console.error('Load images error:', e); }
-    };
-    loadAllImages();
-    // Обновляем фотки раз в минуту, если кто-то другой сохранил заказ
-    const interval = setInterval(loadAllImages, 60000);
-    return () => clearInterval(interval);
+    // Пока ничего не загружаем — ждём явного вызова ensureOrderImages(id) из вкладок/форм.
+    // Совместимость: некоторые старые компоненты могут проверять orderImages[id] — для них
+    // гарантируем что ключ всегда есть (хотя бы как []).
   }, []);
 
-  // 2. Функция изолированного сохранения фото (отправляет только Base64 в отдельную ячейку)
+  // === ИСПРАВЛЕНО 2026-06-27 v2: ленивая загрузка фото одного заказа ===
+  // Кэш в state orderImages[id]. Повторные вызовы для одного id не делают запрос (мгновенно).
+  const ensureOrderImages = useCallback(async (orderId) => {
+    const id = String(orderId);
+    // Уже в кэше — отдаём без запроса
+    if (id in orderImages) return orderImages[id];
+    // Идёт загрузка — возвращаем тот же promise (защита от дабл-клика)
+    if (window._imgLoadingPromises && window._imgLoadingPromises[id]) return window._imgLoadingPromises[id];
+
+    window._imgLoadingPromises = window._imgLoadingPromises || {};
+    const p = (async () => {
+      try {
+        const imgs = await loadImagesForOrder(id);
+        setOrderImages(prev => ({...prev, [id]: imgs}));
+        return imgs;
+      } catch (e) {
+        console.warn(`[images] load failed for ${id}:`, e.message);
+        setOrderImages(prev => ({...prev, [id]: []}));
+        return [];
+      } finally {
+        delete window._imgLoadingPromises[id];
+      }
+    })();
+    window._imgLoadingPromises[id] = p;
+    return p;
+  }, [orderImages]);
+
+  // === Ленивая загрузка фото для нескольких заказов разом (с лимитом параллельности) ===
+  const ensureOrderImagesBulk = useCallback(async (orderIds, concurrency = 6) => {
+    const ids = orderIds.map(String).filter(id => !(id in orderImages));
+    if (ids.length === 0) return;
+    // Параллельно, но не больше concurrency за раз — чтобы не нагружать Supabase
+    for (let i = 0; i < ids.length; i += concurrency) {
+      const chunk = ids.slice(i, i + concurrency);
+      await Promise.all(chunk.map(id => ensureOrderImages(id)));
+    }
+  }, [orderImages, ensureOrderImages]);
+
+  // === ИСПРАВЛЕНО 2026-06-27: ручное обновление всех данных (без polling) ===
+  // v2: фотки не подгружаем массово — пользователь сам откроет нужный заказ
+  const refreshAll = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    pushSaveStatus('saving');
+    try {
+      await Promise.all([
+        reloadOrders(),
+        reloadRepairs(),
+      ]);
+      // Очищаем кэш фото — форсируем перезагрузку при следующем обращении
+      setOrderImages({});
+      pushSaveStatus('ok');
+    } catch (e) {
+      pushSaveStatus('error', e.message);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshing, reloadOrders, reloadRepairs]);
+
+  // 2. Функция изолированного сохранения фото (через адаптер)
   const _saveImagesForOrder = useCallback(async (orderId, imgs) => {
-    const key = `ws_img_v1_${orderId}`;
     window._savingCount = (window._savingCount || 0) + 1;
     pushSaveStatus('saving');
     try {
-      const { error } = await supabase.from('settings').upsert({ key, data: imgs }, { onConflict: 'key' });
-      if (error) throw error;
+      await adapterSaveImages(orderId, imgs);
       setOrderImages(prev => ({...prev, [orderId]: imgs}));
       pushSaveStatus('ok');
     } catch(e) {
@@ -154,7 +202,7 @@ export const WorkshopTracker = () => {
     setOrders((orders||[]).filter(o => o.id !== id));
     setOrderImages(prev => { const n = {...prev}; delete n[id]; return n; });
     // Не забываем удалить ключ фоток из БД
-    supabase.from('settings').delete().eq('key', `ws_img_v1_${id}`).then();
+    adapterDeleteImages(id).catch(e => console.warn('deleteImages:', e.message));
   }, [orders, setOrders]);
 
   // Конфигурация вкладок для СУПЕРПОЛЬЗОВАТЕЛЯ (полный доступ)
@@ -170,21 +218,22 @@ export const WorkshopTracker = () => {
     { id: "users", icon: "⚙️", label: "Пользователи" }
   ];
 
-  // Конфигурация вкладок для МАСТЕРА (только ремонты и клиенты)
+  // Конфигурация вкладок для МАСТЕРОВ (только ремонты и клиенты) — одинаковая для обоих мастеров
+  // ИСПРАВЛЕНО 2026-06-27: masterTabs теперь работает для всех ролей мастеров
   const masterTabs = [
     { id: "repairs", icon: "🔧", label: "Ремонты" },
     { id: "contacts", icon: "👥", label: "Клиенты" }
   ];
 
-  // Выбираем вкладки в зависимости от роли
+  // Выбираем вкладки в зависимости от роли (ИСПРАВЛЕНО 2026-06-27: используем isAnyMaster)
   const tabsConfig = isSuperuser ? superuserTabs : masterTabs;
 
-  // При входе мастера — сразу открываем вкладку "Ремонты"
+  // При входе любого мастера — сразу открываем вкладку "Ремонты"
   useEffect(() => {
-    if (currentUser && isMasterSikupilli && !tabsConfig.find(t => t.id === tab)) {
+    if (currentUser && isAnyMaster && !tabsConfig.find(t => t.id === tab)) {
       setTab("repairs");
     }
-  }, [currentUser, isMasterSikupilli, tab, tabsConfig]);
+  }, [currentUser, isAnyMaster, tab, tabsConfig]);
 
   // === ЭКРАН ЗАГРУЗКИ ===
   if (loading) {
@@ -283,6 +332,17 @@ export const WorkshopTracker = () => {
                   {isSuperuser ? 'Администратор' : 'Мастер'}
                 </div>
               </div>
+              {/* ИСПРАВЛЕНО 2026-06-27: кнопка ручного обновления (заменила polling) */}
+              <button
+                onClick={refreshAll}
+                disabled={refreshing}
+                className="p-2 sm:p-2.5 bg-sky-50 text-sky-600 rounded-xl hover:bg-sky-100 transition-all border border-sky-200 disabled:opacity-50 disabled:cursor-wait"
+                title="Обновить данные"
+              >
+                <svg className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
               <button
                 onClick={logout}
                 className="p-2 sm:p-2.5 bg-rose-50 text-rose-600 rounded-xl hover:bg-rose-100 transition-all border border-rose-200"
@@ -304,20 +364,40 @@ export const WorkshopTracker = () => {
             {tabsConfig.find(t => t.id === tab)?.label}
           </h1>
           <div className="flex items-center gap-4 text-sm font-medium text-slate-500">
-            <span>{ordersWithImages.length} зак · {cncOrders.length} CNC</span>
+            {/* ИСПРАВЛЕНО 2026-06-27: пока данные летят, показываем индикатор, а не «0 зак» */}
+            {(!ordersLoaded || refreshing) ? (
+              <span className="flex items-center gap-2 text-sky-600">
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                </svg>
+                Загружаем...
+              </span>
+            ) : (
+              <span>{ordersWithImages.length} зак · {cncOrders.length} CNC</span>
+            )}
           </div>
         </div>
 
         <div className="transition-all duration-300 bg-white p-4 sm:p-6 md:p-8 rounded-[16px] sm:rounded-[24px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-100">
 
-          {tab === "new-order" && <OrderForm orders={ordersWithImages} saveOrder={saveOrder} updateOrder={updateOrder} editingOrder={editingOrder} onCancelEdit={() => { setEditingOrder(null); }} customTypes={customTypes} sources={sources} allRepairs={repairs} allCnc={cncOrders} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} />}
+          {tab === "new-order" && <OrderForm orders={ordersWithImages} saveOrder={saveOrder} updateOrder={updateOrder} editingOrder={editingOrder} onCancelEdit={() => { setEditingOrder(null); }} customTypes={customTypes} sources={sources} allRepairs={repairs} allCnc={cncOrders} ensureOrderImages={ensureOrderImages} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} />}
 
-          {tab === "order-journal" && <OrdersTab orders={ordersWithImages} setOrders={setOrders} deleteOrder={deleteOrder} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} onEditOrder={(o) => { setEditingOrder(o); setTab("new-order"); }} onOpenReceipt={(o) => setOrderReceipt(o)} />}
+          {/* ИСПРАВЛЕНО 2026-06-27: пока данные грузятся — скелетон, а не пустой «0 заказ» */}
+          {tab === "order-journal" && (
+            ordersLoaded
+              ? <OrdersTab orders={ordersWithImages} setOrders={setOrders} deleteOrder={deleteOrder} ensureOrderImages={ensureOrderImages} ensureOrderImagesBulk={ensureOrderImagesBulk} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} onEditOrder={(o) => { setEditingOrder(o); setTab("new-order"); }} onOpenReceipt={(o) => setOrderReceipt(o)} />
+              : <OrdersSkeleton rows={6} />
+          )}
 
-          {tab === "repairs" && <RepairsTab repairs={repairs} setRepairs={setRepairs} allOrders={ordersWithImages} allCnc={cncOrders} sources={sources} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} />}
+          {tab === "repairs" && (
+            repairsLoaded
+              ? <RepairsTab repairs={repairs} setRepairs={setRepairs} allOrders={ordersWithImages} allCnc={cncOrders} sources={sources} ensureOrderImages={ensureOrderImages} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} />
+              : <RepairsSkeleton rows={5} />
+          )}
 
           {/* Сюда прокинуты updateOrder и editOrder, чтобы Кирилл мог изменять статус 3D из вкладки VAU */}
-          {tab === "cnc" && <CncTab cncOrders={cncOrders} setCncOrders={setCncOrders} cncClients={cncClients} setCncClients={setCncClients} cncItems={cncItems} setCncItems={setCncItems} orders={ordersWithImages} updateOrder={updateOrder} editOrder={(o) => { /* Находим заказ в базе и перекидываем во вкладку */ setTab("orders"); setTimeout(()=> { const btn = document.querySelector(`[data-edit-order="${o.id}"]`); if(btn) btn.click(); }, 300); }} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} />}
+          {tab === "cnc" && <CncTab cncOrders={cncOrders} setCncOrders={setCncOrders} cncClients={cncClients} setCncClients={setCncClients} cncItems={cncItems} setCncItems={setCncItems} orders={ordersWithImages} ensureOrderImages={ensureOrderImages} updateOrder={updateOrder} editOrder={(o) => { /* Находим заказ в базе и перекидываем во вкладку */ setTab("orders"); setTimeout(()=> { const btn = document.querySelector(`[data-edit-order="${o.id}"]`); if(btn) btn.click(); }, 300); }} onOpenViewer={(imgs, i) => setViewerPhoto({images: imgs, idx: i})} />}
 
           {tab === "contacts" && <ContactsTab orders={ordersWithImages} repairs={repairs} cncOrders={cncOrders} setOrders={setOrders} />}
 

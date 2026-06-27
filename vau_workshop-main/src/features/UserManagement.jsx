@@ -31,21 +31,23 @@ export const UserManagement = () => {
   const { currentUser, allUsers, registerUser, updateUser, deleteUser, reloadUsers } = useAuth();
   const [showForm, setShowForm] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
-  const [form, setForm] = useState({ username: '', password: '', name: '' });
+  // ИСПРАВЛЕНО 2026-06-27: добавлено поле role в форму (master_sikupilli / master_vaugold)
+  const [form, setForm] = useState({ username: '', password: '', name: '', role: 'master_sikupilli' });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Формат роли на русском
+  // Формат роли на русском (ИСПРАВЛЕНО 2026-06-27: было ROLES.MASTER — не существовало; теперь отдельные лейблы для двух мастеров)
   const roleLabel = (role) => {
     if (role === ROLES.SUPERUSER) return 'Администратор';
-    if (role === ROLES.MASTER) return 'Мастер';
+    if (role === ROLES.MASTER_SIKUPILLI) return 'Мастер Sikupilli (EM)';
+    if (role === ROLES.MASTER_VAUGOLD) return 'Мастер Vaugold (OM)';
     return role;
   };
 
   // Открытие формы добавления
   const handleAdd = () => {
     setEditingUser(null);
-    setForm({ username: '', password: '', name: '' });
+    setForm({ username: '', password: '', name: '', role: 'master_sikupilli' });
     setError('');
     setShowForm(true);
   };
@@ -53,7 +55,12 @@ export const UserManagement = () => {
   // Открытие формы редактирования
   const handleEdit = (user) => {
     setEditingUser(user.username);
-    setForm({ username: user.username, password: '', name: user.name || '' });
+    setForm({
+      username: user.username,
+      password: '',
+      name: user.name || '',
+      role: user.role || 'master_sikupilli'
+    });
     setError('');
     setShowForm(true);
   };
@@ -62,7 +69,7 @@ export const UserManagement = () => {
   const handleCancel = () => {
     setShowForm(false);
     setEditingUser(null);
-    setForm({ username: '', password: '', name: '' });
+    setForm({ username: '', password: '', name: '', role: 'master_sikupilli' });
     setError('');
   };
 
@@ -96,11 +103,12 @@ export const UserManagement = () => {
         setError(result.error);
       }
     } else {
-      // Добавление нового
+      // Добавление нового (ИСПРАВЛЕНО 2026-06-27: передаём выбранную роль)
       const result = await registerUser({
         username: form.username.trim(),
         password: form.password,
-        name: form.name
+        name: form.name,
+        role: form.role
       });
       if (result.success) {
         setSuccess('Пользователь добавлен');
@@ -201,6 +209,43 @@ export const UserManagement = () => {
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="Иван Иванов"
                 />
+              </div>
+
+              {/* ИСПРАВЛЕНО 2026-06-27: выбор роли — добавлена master_vaugold (квитанции OM, точка Vaugold) */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  Роль
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, role: 'master_sikupilli' })}
+                    className={`px-4 py-3 rounded-xl text-sm font-semibold border transition-all ${
+                      form.role === 'master_sikupilli'
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="font-bold">Sikupilli (EM)</div>
+                    <div className={`text-[10px] mt-0.5 ${form.role === 'master_sikupilli' ? 'text-blue-100' : 'text-slate-400'}`}>
+                      Квитанции EM, точка Sikupilli
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, role: 'master_vaugold' })}
+                    className={`px-4 py-3 rounded-xl text-sm font-semibold border transition-all ${
+                      form.role === 'master_vaugold'
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-md'
+                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="font-bold">Vaugold (OM)</div>
+                    <div className={`text-[10px] mt-0.5 ${form.role === 'master_vaugold' ? 'text-emerald-100' : 'text-slate-400'}`}>
+                      Квитанции OM, точка Vaugold
+                    </div>
+                  </button>
+                </div>
               </div>
             </div>
 

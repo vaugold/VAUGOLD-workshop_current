@@ -1,3 +1,5 @@
+// ИСПРАВЛЕНО 2026-06-27: импортируем скомпилированный Tailwind CSS вместо CDN
+import './index.css'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { AuthProvider } from './context/AuthContext'

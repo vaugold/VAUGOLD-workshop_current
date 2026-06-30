@@ -31,6 +31,45 @@ const stripUndef = (obj) => {
   return out;
 };
 
+// ИСПРАВЛЕНО 2026-06-30: пустые строки в DATE/NUMERIC-колонках → NULL.
+// PostgreSQL кидает "invalid input syntax for type {date,numeric}: ''" если послать "" в колонку.
+// Фронт оставляет пустые строки в полях когда значение не указано —
+// теперь на границе с БД такие значения превращаются в null.
+// Покрывает: *_date, deadline*, и ВСЕ numeric по суффиксам имён (см. ниже).
+
+const isDateSnake = (s) => /_date$|^deadline(_|$)/i.test(s || '');
+// Универсальный fallback для numeric: если имя колонки заканчивается на эти суффиксы,
+// это почти наверняка numeric (стоимость, вес, количество, баланс, процент, комиссия и т.д.).
+const NUMERIC_SUFFIXES = [
+  /_cost$/, /_price$/, /_total$/, /_vat$/, /_weight$/, /_balance$/,
+  /_income$/, /_commission$/, /_owe_/, /_remaining$/, /_share$/,
+  /_prepayment$/, /_given$/, /_to_add$/, /_to_return$/,
+  /^markup$/, /^amount$/, /^time$/
+];
+const isNumericSnake = (s) => NUMERIC_SUFFIXES.some(rx => rx.test(s || ''));
+
+const nullifyEmptyTyped = (row, cfg) => {
+  if (!row || typeof row !== 'object') return row;
+  const dateSet = new Set(cfg.dateFields || []);
+  const numericSet = new Set(cfg.numericFields || []);
+  let fixedDates = 0, fixedNumeric = 0;
+  for (const k of Object.keys(row)) {
+    if (row[k] === '') {
+      if (dateSet.has(k) || isDateSnake(k)) {
+        row[k] = null;
+        fixedDates++;
+      } else if (numericSet.has(k) || isNumericSnake(k)) {
+        row[k] = null;
+        fixedNumeric++;
+      }
+    }
+  }
+  if (fixedDates > 0 || fixedNumeric > 0) {
+    console.log('[dataAdapter] nullifyEmptyTyped: заменил', fixedDates, 'дат и', fixedNumeric, 'numeric на null');
+  }
+  return row;
+};
+
 // =====================
 // SETTINGS HELPERS (для ключей без новой таблицы)
 // =====================
@@ -118,6 +157,9 @@ const itemToRow = (item, cfg) => {
       }
     }
   }
+  // ИСПРАВЛЕНО 2026-06-30: пустые строки "" в DATE/NUMERIC-колонках → null.
+  // Делаем ПОСЛЕ построения row, чтобы поймать всё что туда попало.
+  nullifyEmptyTyped(row, cfg);
   return row;
 };
 
@@ -386,10 +428,22 @@ export const saveArray = async (key, newArr) => {
         const value = item[cfg.arrayItemKey];
         if (value !== undefined) row[cfg.arrayItemKey] = value;
       }
+      // ИСПРАВЛЕНО 2026-06-30: itemToRow исключает id (из-за `camel !== 'id'`),
+      // поэтому добавляем id ЯВНО здесь. Без этого INSERT падает с
+      // "null value in column 'id' of relation 'repairs' violates not-null constraint".
+      if (item.id !== undefined && item.id !== null) {
+        row.id = item.id;
+      }
       return stripUndef(row);
     });
+    if (rows.some(r => r.id === undefined || r.id === null)) {
+      throw new Error(`[dataAdapter] INSERT ${cfg.table}: попытка вставить запись без id. Это баг в dataAdapter или форма не выставила item.id.`);
+    }
     const { error } = await supabase.from(cfg.table).insert(rows);
-    if (error) throw error;
+    if (error) {
+      console.error('[dataAdapter] INSERT failed for table', cfg.table, ':', error.message, 'code:', error.code);
+      throw error;
+    }
   }
 
   // UPDATE — ИСПРАВЛЕНО 2026-06-27: используем upsert с onConflict вместо N+1 UPDATE.
@@ -410,7 +464,10 @@ export const saveArray = async (key, newArr) => {
       const { error } = await supabase
         .from(cfg.table)
         .upsert(rows, { onConflict: 'id' });
-      if (error) throw error;
+      if (error) {
+        console.error('[dataAdapter] UPDATE failed for table', cfg.table, ':', error.message, 'code:', error.code);
+        throw error;
+      }
     }
   }
 

@@ -340,8 +340,41 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
   };
   const addItemExtra = (ii) => { 
     const it = [...form.items]; 
-    it[ii] = { ...it[ii], extras: [...(it[ii].extras || []), { description: "", type: "", price: "", cost: "" }] }; 
+    it[ii] = { ...it[ii], extras: [...(it[ii].extras || []), { description: "", type: "", price: "", cost: "", priceWeight: "", pricePerGram: "", costWeight: "", costPerGram: "" }] }; 
     set("items", it); 
+  };
+
+  // === Кросс-формулы для металла (Kuld / Hõbe) в ремонте ===
+  // При вводе любых двух из трёх (вес, €/г, итого) — третье авто-считается.
+  // Работает для вложенной структуры: form.items[ii].extras[ei]
+  const setItemMetalField = (ii, ei, side, field, value) => {
+    const it = [...form.items];
+    const ex = [...(it[ii].extras || [])];
+    const exOne = { ...ex[ei], [field]: value };
+
+    const W   = side === "price" ? "priceWeight"  : "costWeight";
+    const PG  = side === "price" ? "pricePerGram" : "costPerGram";
+    const TOT = side === "price" ? "price"        : "cost";
+
+    const w  = parseFloat(exOne[W])  || 0;
+    const pg = parseFloat(exOne[PG]) || 0;
+    const t  = parseFloat(value)     || 0;
+
+    if (field === W) {
+      if (pg > 0) exOne[TOT] = (t * pg).toFixed(2);
+    } else if (field === PG) {
+      if (w > 0) exOne[TOT] = (w * t).toFixed(2);
+    } else if (field === TOT) {
+      if (w > 0) {
+        exOne[PG] = (t / w).toFixed(2);
+      } else if (pg > 0) {
+        exOne[W] = (t / pg).toFixed(2);
+      }
+    }
+
+    ex[ei] = exOne;
+    it[ii] = { ...it[ii], extras: ex };
+    set("items", it);
   };
 
   // === Разбивка по мастерам (новая логика) ===
@@ -984,15 +1017,20 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                         const isMetal = ex.type === "Металл";
                         const isCoating = ex.type === "Покрытие";
                         return (
-                          <div key={ei} className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                          <div key={ei} className="bg-slate-50 p-3 rounded-lg border border-slate-200 relative">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pr-8">
                               <div>
                                 <div className="text-[9px] text-slate-400 mb-1">Описание</div>
                                 {isMetal ? (
-                                  <select className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none" value={ex.description || ""} onChange={e => setItemExtra(i, ei, "description", e.target.value)}>
-                                    <option value="">— выбрать —</option>
-                                    {METAL_TYPES.map(t => <option key={t}>{t}</option>)}
-                                  </select>
+                                  (() => {
+                                    const isKuld = ex.description === "Kuld";
+                                    return (
+                                      <select className={`w-full px-2 py-1.5 text-xs bg-white border rounded outline-none ${isKuld ? "border-amber-400 ring-1 ring-amber-200" : "border-blue-400 ring-1 ring-blue-200"}`} value={ex.description || ""} onChange={e => setItemExtra(i, ei, "description", e.target.value)}>
+                                        <option value="">— выбрать —</option>
+                                        {METAL_TYPES.map(t => <option key={t}>{t}</option>)}
+                                      </select>
+                                    );
+                                  })()
                                 ) : isCoating ? (
                                   <select className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none" value={ex.description || ""} onChange={e => setItemExtra(i, ei, "description", e.target.value)}>
                                     <option value="">— выбрать —</option>
@@ -1011,32 +1049,92 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                               </div>
                               <div>
                                 <div className="text-[9px] text-slate-400 mb-1">Стоимость клиенту (€)</div>
-                                <input type="number" min="0" placeholder="0" className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none" value={ex.price || ""} onChange={e => setItemExtra(i, ei, "price", e.target.value)} />
+                                {isMetal ? (
+                                  <div className="text-[10px] text-blue-600 font-semibold py-1.5 px-2 bg-blue-50 border border-blue-200 rounded">
+                                    ⚙️ Заполните ниже: вес × €/г
+                                  </div>
+                                ) : (
+                                  <input type="number" min="0" placeholder="0" className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none" value={ex.price || ""} onChange={e => setItemExtra(i, ei, "price", e.target.value)} />
+                                )}
                               </div>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2 items-end">
-                              <div>
-                                <div className="text-[9px] text-slate-400 mb-1">Себестоимость (€)</div>
-                                <input type="number" min="0" placeholder="0" className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none" value={ex.cost || ""} onChange={e => setItemExtra(i, ei, "cost", e.target.value)} />
+
+                            {isMetal ? (
+                              /* === РЕЖИМ МЕТАЛЛ (Kuld / Hõbe): кросс-формулы вес × цена/грамм = итого === */
+                              (() => {
+                                const isKuld = ex.description === "Kuld";
+                                return (
+                                  <div className={`mt-2 border-t pt-2 ${isKuld ? "border-amber-200" : "border-blue-200"}`}>
+                                    <div className={`text-[9px] font-bold uppercase mb-2 ${isKuld ? "text-amber-700" : "text-blue-700"}`}>
+                                      🔩 Металл ({isKuld ? "Золото / Kuld" : "Серебро / Hõbe"}) — кросс-формулы: вес × €/г = итого
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                      {/* Себестоимость (закупка) */}
+                                      <div className="bg-rose-50/60 border border-rose-200 rounded p-2">
+                                        <div className="text-[9px] font-bold text-rose-600 uppercase mb-1">Себестоимость (наша закупка)</div>
+                                        <div className="grid grid-cols-3 gap-1">
+                                          <div>
+                                            <label className="text-[8px] text-rose-400 uppercase block mb-0.5">Вес (g)</label>
+                                            <input type="number" step="0.01" min="0" placeholder="0" className="w-full bg-white border border-rose-200 rounded px-1.5 py-1 text-xs outline-none" value={ex.costWeight || ""} onChange={e => setItemMetalField(i, ei, "cost", "costWeight", e.target.value)} />
+                                          </div>
+                                          <div>
+                                            <label className="text-[8px] text-rose-400 uppercase block mb-0.5">€/г закуп.</label>
+                                            <input type="number" step="0.01" min="0" placeholder="0" className="w-full bg-white border border-rose-200 rounded px-1.5 py-1 text-xs outline-none" value={ex.costPerGram || ""} onChange={e => setItemMetalField(i, ei, "cost", "costPerGram", e.target.value)} />
+                                          </div>
+                                          <div>
+                                            <label className="text-[8px] text-rose-700 uppercase block mb-0.5 font-black">Итого себ.</label>
+                                            <input type="number" step="0.01" min="0" placeholder="0.00" className="w-full bg-rose-100 border-2 border-rose-300 rounded px-1.5 py-1 text-xs font-bold text-rose-800 outline-none" value={ex.cost || ""} onChange={e => setItemExtra(i, ei, "cost", e.target.value)} />
+                                          </div>
+                                        </div>
+                                      </div>
+                                      {/* Цена клиенту (продажа) */}
+                                      <div className="bg-emerald-50/60 border border-emerald-200 rounded p-2">
+                                        <div className="text-[9px] font-bold text-emerald-600 uppercase mb-1">Цена клиенту (продажа)</div>
+                                        <div className="grid grid-cols-3 gap-1">
+                                          <div>
+                                            <label className="text-[8px] text-emerald-400 uppercase block mb-0.5">Вес (g)</label>
+                                            <input type="number" step="0.01" min="0" placeholder="0" className="w-full bg-white border border-emerald-200 rounded px-1.5 py-1 text-xs outline-none" value={ex.priceWeight || ""} onChange={e => setItemMetalField(i, ei, "price", "priceWeight", e.target.value)} />
+                                          </div>
+                                          <div>
+                                            <label className="text-[8px] text-emerald-400 uppercase block mb-0.5">€/г клиенту</label>
+                                            <input type="number" step="0.01" min="0" placeholder="0" className="w-full bg-white border border-emerald-200 rounded px-1.5 py-1 text-xs outline-none" value={ex.pricePerGram || ""} onChange={e => setItemMetalField(i, ei, "price", "pricePerGram", e.target.value)} />
+                                          </div>
+                                          <div>
+                                            <label className="text-[8px] text-emerald-700 uppercase block mb-0.5 font-black">Итого прод.</label>
+                                            <input type="number" step="0.01" min="0" placeholder="0.00" className="w-full bg-emerald-100 border-2 border-emerald-300 rounded px-1.5 py-1 text-xs font-bold text-emerald-800 outline-none" value={ex.price || ""} onChange={e => setItemExtra(i, ei, "price", e.target.value)} />
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })()
+                            ) : (
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2 border-t border-slate-100 pt-2 items-end">
+                                <div>
+                                  <div className="text-[9px] text-slate-400 mb-1">Себестоимость (€)</div>
+                                  <input type="number" min="0" placeholder="0" className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none" value={ex.cost || ""} onChange={e => setItemExtra(i, ei, "cost", e.target.value)} />
+                                </div>
+                                {isCoating && (
+                                  <>
+                                    <div>
+                                      <div className="text-[9px] text-slate-400 mb-1">Мастер покрытия</div>
+                                      <select className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none" value={ex.coatingMaster || ""} onChange={e => setItemExtra(i, ei, "coatingMaster", e.target.value)}>
+                                        <option value="">— выбрать —</option>
+                                        {[MASTERS.KSENIYA, MASTERS.OLEG, MASTERS.OUTSOURCE].map(m => <option key={m}>{m}</option>)}
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <div className="text-[9px] text-slate-400 mb-1">Стоимость работы мастера (€)</div>
+                                      <input type="number" min="0" placeholder="0" className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none" value={ex.coatingMasterCost || ""} onChange={e => setItemExtra(i, ei, "coatingMasterCost", e.target.value)} />
+                                    </div>
+                                  </>
+                                )}
+                                {!isCoating && <div></div>}
                               </div>
-                              {isCoating && (
-                                <>
-                                  <div>
-                                    <div className="text-[9px] text-slate-400 mb-1">Мастер покрытия</div>
-                                    <select className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none" value={ex.coatingMaster || ""} onChange={e => setItemExtra(i, ei, "coatingMaster", e.target.value)}>
-                                      <option value="">— выбрать —</option>
-                                      {[MASTERS.KSENIYA, MASTERS.OLEG, MASTERS.OUTSOURCE].map(m => <option key={m}>{m}</option>)}
-                                    </select>
-                                  </div>
-                                  <div>
-                                    <div className="text-[9px] text-slate-400 mb-1">Стоимость работы мастера (€)</div>
-                                    <input type="number" min="0" placeholder="0" className="w-full px-2 py-1.5 text-xs bg-white border border-slate-200 rounded outline-none" value={ex.coatingMasterCost || ""} onChange={e => setItemExtra(i, ei, "coatingMasterCost", e.target.value)} />
-                                  </div>
-                                </>
-                              )}
-                              {!isCoating && <div></div>}
-                              <button type="button" onClick={() => removeItemExtra(i, ei)} className="text-slate-400 hover:text-rose-500 font-bold text-lg leading-none w-7 h-7 rounded-full hover:bg-rose-50 flex items-center justify-center self-end">×</button>
-                            </div>
+                            )}
+
+                            <button type="button" onClick={() => removeItemExtra(i, ei)} className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white text-slate-400 hover:text-rose-500 hover:bg-rose-50 flex items-center justify-center transition-colors">×</button>
                           </div>
                         );
                       })}

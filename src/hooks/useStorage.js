@@ -73,6 +73,9 @@ export const useStorage = (key, def) => {
       hadError = true;
       console.error(`[useStorage] Ошибка сохранения ${key}:`, e);
       notifySaveStatus('error', e.message);
+      // ДИАГНОСТИКА 2026-06-30: явный alert при ошибке, чтобы пользователь 100% увидел проблему
+      // и мог скинуть текст. В проде убрать.
+      try { alert(`❌ ОШИБКА СОХРАНЕНИЯ [${key}]:\n\n${e.message || e}\n\nBUILD: ${window.__BUILD_TAG || 'unknown'}\n\nСкинь скриншот разработчику.`); } catch {}
     } finally {
       window._savingCount = Math.max(0, (window._savingCount || 1) - 1);
       window._isSaving = window._savingCount > 0;

@@ -30,6 +30,21 @@ export const KEY_CONFIG = {
   ws_orders_v5: {
     type: 'array',
     table: 'orders',
+    // ИСПРАВЛЕНО 2026-06-30: явные списки DATE- и NUMERIC-колонок для нулификации пустых строк.
+    // Без этого PostgreSQL кидает "invalid input syntax for type {date,numeric}: ''".
+    dateFields: [
+      'order_date', 'deadline', 'deadline_3d', 'work_done_date', 'delivery_date',
+      'reported_date', 'prepayment_date', 'payment_date', 'final_payment_date',
+      'l24_prepayment_date'
+    ],
+    numericFields: [
+      'markup', 'production_cost', 'client_total', 'client_total_with_vat',
+      'work_total', 'stages_total', 'extras_cost', 'extras_price',
+      'outsource_cost', 'coating_outsource', 'project_income', 'balance',
+      'prepayment', 'vat', 'final_weight', 'final_weight_with_loss',
+      'metal_given', 'l24_commission', 'l24_owe_us', 'l24_prepayment',
+      'l24_remaining'
+    ],
     fields: {
       id: 'id',
       orderNumber: 'order_number',
@@ -106,6 +121,15 @@ export const KEY_CONFIG = {
   ws_repairs_v1: {
     type: 'array',
     table: 'repairs',
+    dateFields: [
+      'order_date', 'deadline', 'delivery_date', 'reported_date',
+      'l24_payment_date', 'final_payment_date'
+    ],
+    numericFields: [
+      'prepayment', 'balance', 'balance_with_vat', 'total_price',
+      'total_with_vat', 'vat', 'net_income', 'extras_cost', 'extras_price',
+      'l24_commission'
+    ],
     fields: {
       id: 'id',
       orderNumber: 'order_number',
@@ -160,6 +184,12 @@ export const KEY_CONFIG = {
   ws_cnc_v1: {
     type: 'array',
     table: 'cnc_orders',
+    dateFields: ['order_date', 'deadline', 'delivery_date', 'payment_date'],
+    numericFields: [
+      'model_cost', 'cutting_cost', 'cutting_time', 'model_time',
+      'purchased_model_cost', 'net_income', 'client_total',
+      'kirill_share', 'workshop_share'
+    ],
     fields: {
       id: 'id',
       item: 'item',

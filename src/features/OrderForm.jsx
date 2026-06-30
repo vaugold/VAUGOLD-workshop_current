@@ -190,10 +190,10 @@ export const OrderForm = ({
     set("extras", e);
   };
 
-  // === Кросс-формулы для золота (Kuld) ===
+  // === Кросс-формулы для металла (Kuld / Hõbe) ===
   // При вводе любых двух из трёх (вес, цена за грамм, итого) — третье авто-считается.
   // Сделано отдельно для «цена клиенту» и «себестоимость».
-  const setKuldField = (extraIdx, side, field, value) => {
+  const setMetalField = (extraIdx, side, field, value) => {
     const extras = [...form.extras];
     const ex = { ...extras[extraIdx], [field]: value };
 
@@ -605,7 +605,7 @@ export const OrderForm = ({
                           <option value="">—</option>{COATING_TYPES.map(t => <option key={t}>{t}</option>)}
                         </select>
                       ) : isMetal ? (
-                        <select className={`w-full bg-slate-50 border rounded-lg px-2 py-1.5 text-xs outline-none ${isKuld ? "border-amber-400 ring-1 ring-amber-200" : "border-slate-200"}`} value={ex.description} onChange={e => setExtraField(i, "description", e.target.value)}>
+                        <select className={`w-full bg-slate-50 border rounded-lg px-2 py-1.5 text-xs outline-none ${isKuld ? "border-amber-400 ring-1 ring-amber-200" : "border-blue-400 ring-1 ring-blue-200"}`} value={ex.description} onChange={e => setExtraField(i, "description", e.target.value)}>
                           <option value="">—</option>{METAL_TYPES.map(t => <option key={t}>{t}</option>)}
                         </select>
                       ) : (
@@ -614,10 +614,10 @@ export const OrderForm = ({
                     </div>
                   </div>
 
-                  {isKuld ? (
-                    /* === РЕЖИМ ЗОЛОТО: кросс-формулы вес × цена/грамм = итого === */
-                    <div className="mt-3 border-t border-amber-200 pt-3">
-                      <div className="text-[9px] font-bold text-amber-700 uppercase mb-2">✨ Золото (Kuld) — кросс-формулы: вес × €/г = итого</div>
+                  {isMetal ? (
+                    /* === РЕЖИМ МЕТАЛЛ (Kuld / Hõbe): кросс-формулы вес × цена/грамм = итого === */
+                    <div className={`mt-3 border-t pt-3 ${isKuld ? "border-amber-200" : "border-blue-200"}`}>
+                      <div className={`text-[9px] font-bold uppercase mb-2 ${isKuld ? "text-amber-700" : "text-blue-700"}`}>🔩 Металл ({isKuld ? "Золото / Kuld" : "Серебро / Hõbe"}) — кросс-формулы: вес × €/г = итого</div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {/* === Себестоимость (для нас) === */}
@@ -626,11 +626,11 @@ export const OrderForm = ({
                           <div className="grid grid-cols-3 gap-2">
                             <div>
                               <label className="text-[8px] text-rose-400 uppercase block mb-0.5">Вес (g)</label>
-                              <input type="number" step="0.01" className="w-full bg-white border border-rose-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.costWeight || ""} onChange={e => setKuldField(i, "cost", "costWeight", e.target.value)} placeholder="0" />
+                              <input type="number" step="0.01" className="w-full bg-white border border-rose-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.costWeight || ""} onChange={e => setMetalField(i, "cost", "costWeight", e.target.value)} placeholder="0" />
                             </div>
                             <div>
                               <label className="text-[8px] text-rose-400 uppercase block mb-0.5">€/г (закупка)</label>
-                              <input type="number" step="0.01" className="w-full bg-white border border-rose-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.costPerGram || ""} onChange={e => setKuldField(i, "cost", "costPerGram", e.target.value)} placeholder="0" />
+                              <input type="number" step="0.01" className="w-full bg-white border border-rose-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.costPerGram || ""} onChange={e => setMetalField(i, "cost", "costPerGram", e.target.value)} placeholder="0" />
                             </div>
                             <div>
                               <label className="text-[8px] text-rose-700 uppercase block mb-0.5 font-black">Итого себ.</label>
@@ -645,11 +645,11 @@ export const OrderForm = ({
                           <div className="grid grid-cols-3 gap-2">
                             <div>
                               <label className="text-[8px] text-emerald-400 uppercase block mb-0.5">Вес (g)</label>
-                              <input type="number" step="0.01" className="w-full bg-white border border-emerald-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.priceWeight || ""} onChange={e => setKuldField(i, "price", "priceWeight", e.target.value)} placeholder="0" />
+                              <input type="number" step="0.01" className="w-full bg-white border border-emerald-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.priceWeight || ""} onChange={e => setMetalField(i, "price", "priceWeight", e.target.value)} placeholder="0" />
                             </div>
                             <div>
                               <label className="text-[8px] text-emerald-400 uppercase block mb-0.5">€/г (клиенту)</label>
-                              <input type="number" step="0.01" className="w-full bg-white border border-emerald-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.pricePerGram || ""} onChange={e => setKuldField(i, "price", "pricePerGram", e.target.value)} placeholder="0" />
+                              <input type="number" step="0.01" className="w-full bg-white border border-emerald-200 rounded px-2 py-1.5 text-xs outline-none" value={ex.pricePerGram || ""} onChange={e => setMetalField(i, "price", "pricePerGram", e.target.value)} placeholder="0" />
                             </div>
                             <div>
                               <label className="text-[8px] text-emerald-700 uppercase block mb-0.5 font-black">Итого прод.</label>

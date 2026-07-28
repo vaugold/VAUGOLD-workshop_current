@@ -9,6 +9,7 @@ import ClientSearch from '../components/ClientSearch';
 import DateInput from '../components/DateInput';
 import DraftBanner from '../components/DraftBanner';
 import { useAutoSave } from '../hooks/useAutoSave';
+import { saveArrayDelete } from '../services/dataAdapter';
 
 // --- КОНСТАНТЫ РЕМОНТОВ ---
 const LOCATIONS = ["Vaugold", "Sikupilli", "L24"];
@@ -597,7 +598,10 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
   };
 
   const deleteRepair = id => {
-    if (confirm("Удалить этот ремонт?")) setRepairs(repairs.filter(x => x.id !== id));
+    if (!confirm("Удалить этот ремонт?")) return;
+    // ИСПРАВЛЕНО 2026-07-15: явное удаление через saveArrayDelete (а не через diff в saveArray).
+    setRepairs(repairs.filter(x => x.id !== id));
+    saveArrayDelete("ws_repairs_v1", id).catch(e => console.warn('deleteRepair:', e.message));
   };
 
   // Быстрое обновление одного поля ремонта прямо из превью карточки (без открытия формы)
@@ -693,6 +697,83 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
     }
     return Array.from(ys).sort((a, b) => b.localeCompare(a));
   }, [repairs]);
+
+  // ИСПРАВЛЕНО 2026-07-08: для администратора — суммы учитывают ВСЕ активные фильтры
+  // (статус + точка приёма + курьер + период). Разбивка по точкам: VAU / Sikupilli / L24.
+  // Для RepairsTab L24 определяется по location (партнёрская программа),
+  // а VAU/Sikupilli — по pickupPoint (точка приёма).
+  const matchesAllFilters = (r) => {
+    if (r.isDraft) return false;
+    // Статус
+    if (statusFilter === "🟢 Активные") {
+      if (!(r.receptionStatus !== "Выдано клиенту")) return false;
+    } else if (statusFilter === "⏳ Ожидает клиента") {
+      if (!(r.awaitingClient && r.receptionStatus !== "Выдано клиенту")) return false;
+    } else if (statusFilter === "Все") {
+      // ok
+    } else if (statusFilter === "Ремонт готов") {
+      if (!(r.masterStatus === "Ремонт готов" && r.receptionStatus !== "Выдано клиенту")) return false;
+    } else if (statusFilter === "🛵 VAU→Sikupilli") {
+      if (!(!!r.courierVauSiku && r.receptionStatus !== "Выдано клиенту")) return false;
+    } else if (statusFilter === "🛵 Sikupilli→VAU") {
+      if (!(!!r.courierSikuVau && r.receptionStatus !== "Выдано клиенту")) return false;
+    } else if (statusFilter === "🛵 Курьер (любой)") {
+      if (!((r.courierVauSiku || r.courierSikuVau) && r.receptionStatus !== "Выдано клиенту")) return false;
+    } else if (REPAIR_RECEPTION_STATUSES.includes(statusFilter)) {
+      if (r.receptionStatus !== statusFilter) return false;
+    } else if (REPAIR_MASTER_STATUSES.includes(statusFilter)) {
+      if (r.masterStatus !== statusFilter) return false;
+    }
+    // Точка приёма (только VAU/Sikupilli, без L24 — L24 определяется по location)
+    if (pointFilter === "EM" && r.pickupPoint !== "Sikupilli") return false;
+    if (pointFilter === "VAU" && r.pickupPoint !== "Vaugold") return false;
+    // Дата
+    if (r.orderDate) {
+      if (yearFilter !== "Все" && !r.orderDate.startsWith(yearFilter + "-")) return false;
+      if (monthFilter !== "Все" && r.orderDate.slice(5, 7) !== monthFilter) return false;
+      if (dateFrom && r.orderDate < dateFrom) return false;
+      if (dateTo && r.orderDate > dateTo) return false;
+    } else if (yearFilter !== "Все" || monthFilter !== "Все" || dateFrom || dateTo) {
+      return false;
+    }
+    return true;
+  };
+
+  // Возвращает группу точки для разбивки: 'VAU' | 'Sikupilli' | 'L24'
+  const getPointGroup = (r) => {
+    if (r.location === "L24") return "L24";
+    if (r.pickupPoint === "Vaugold") return "VAU";
+    if (r.pickupPoint === "Sikupilli") return "Sikupilli";
+    return "VAU"; // fallback
+  };
+
+  const repairPeriodTotals = useMemo(() => {
+    let accepted = 0, unpaid = 0, count = 0;
+    const byPoint = { VAU: 0, Sikupilli: 0, L24: 0 };
+    const countByPoint = { VAU: 0, Sikupilli: 0, L24: 0 };
+    for (const r of repairs) {
+      if (!matchesAllFilters(r)) continue;
+      const total = parseFloat(r.totalPrice) || 0;
+      const balance = parseFloat(r.balance) || 0;
+      const group = getPointGroup(r);
+      accepted += total;
+      byPoint[group] += total;
+      count++;
+      countByPoint[group]++;
+      // ИСПРАВЛЕНО 2026-07-09: если ремонт выдан клиенту И указан способ оплаты —
+      // считаем его оплаченным (клиент заплатил при выдаче), даже если balance > 0
+      // (аванс мог быть 0, а оплата вся прошла при выдаче).
+      const isPaidOnIssue = r.receptionStatus === "Выдано клиенту" && (r.finalPaymentMethod || r.paymentMethod);
+      if (!isPaidOnIssue && balance > 0) unpaid += balance;
+    }
+    return { accepted, unpaid, count, byPoint, countByPoint };
+  }, [repairs, statusFilter, yearFilter, monthFilter, dateFrom, dateTo, pointFilter]);
+
+  const periodLabelRepairs = (
+    yearFilter !== "Все" || monthFilter !== "Все" || dateFrom || dateTo
+  )
+    ? `${dateFrom || '...'} — ${dateTo || '...'}`
+    : 'Все даты';
 
   const draftRepairs = repairs.filter(r => r.isDraft);
 
@@ -1083,7 +1164,7 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                                           </div>
                                           <div>
                                             <label className="text-[8px] text-rose-700 uppercase block mb-0.5 font-black">Итого себ.</label>
-                                            <input type="number" step="0.01" min="0" placeholder="0.00" className="w-full bg-rose-100 border-2 border-rose-300 rounded px-1.5 py-1 text-xs font-bold text-rose-800 outline-none" value={ex.cost || ""} onChange={e => setItemExtra(i, ei, "cost", e.target.value)} />
+                                            <input type="number" step="0.01" min="0" placeholder="0.00" className="w-full bg-rose-100 border-2 border-rose-300 rounded px-1.5 py-1 text-xs font-bold text-rose-800 outline-none" value={ex.cost || ""} onChange={e => setItemMetalField(i, ei, "cost", "cost", e.target.value)} />
                                           </div>
                                         </div>
                                       </div>
@@ -1101,7 +1182,7 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                                           </div>
                                           <div>
                                             <label className="text-[8px] text-emerald-700 uppercase block mb-0.5 font-black">Итого прод.</label>
-                                            <input type="number" step="0.01" min="0" placeholder="0.00" className="w-full bg-emerald-100 border-2 border-emerald-300 rounded px-1.5 py-1 text-xs font-bold text-emerald-800 outline-none" value={ex.price || ""} onChange={e => setItemExtra(i, ei, "price", e.target.value)} />
+                                            <input type="number" step="0.01" min="0" placeholder="0.00" className="w-full bg-emerald-100 border-2 border-emerald-300 rounded px-1.5 py-1 text-xs font-bold text-emerald-800 outline-none" value={ex.price || ""} onChange={e => setItemMetalField(i, ei, "price", "price", e.target.value)} />
                                           </div>
                                         </div>
                                       </div>
@@ -1500,6 +1581,43 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
             </div>
           </div>
 
+          {/* ИСПРАВЛЕНО 2026-07-08: для администратора — суммы по ВСЕМ активным фильтрам + разбивка по точкам */}
+          {isSuperuser && (
+            <div className="mb-4 bg-gradient-to-r from-slate-50 to-white border border-slate-200 rounded-[16px] p-3 px-5 shadow-sm">
+              <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 text-sm">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-auto">📊 {periodLabelRepairs}</span>
+                <span className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Принято:</span>
+                  <span className="font-bold text-slate-800 tabular-nums">{fmt(repairPeriodTotals.accepted)} €</span>
+                  <span className="text-[10px] text-slate-400">({repairPeriodTotals.count})</span>
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Не оплачено:</span>
+                  <span className={`font-bold tabular-nums ${repairPeriodTotals.unpaid > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{fmt(repairPeriodTotals.unpaid)} €</span>
+                </span>
+              </div>
+              {/* Разбивка по точкам: VAU / Sikupilli / L24 */}
+              <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1 text-xs mt-2 pt-2 border-t border-slate-200/60">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mr-auto">По точкам:</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[9px] font-bold text-indigo-500 uppercase">💎 VAU</span>
+                  <span className="font-semibold text-indigo-700 tabular-nums">{fmt(repairPeriodTotals.byPoint.VAU)} €</span>
+                  <span className="text-[9px] text-slate-400">({repairPeriodTotals.countByPoint.VAU})</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[9px] font-bold text-purple-500 uppercase">🏪 Sikupilli</span>
+                  <span className="font-semibold text-purple-700 tabular-nums">{fmt(repairPeriodTotals.byPoint.Sikupilli)} €</span>
+                  <span className="text-[9px] text-slate-400">({repairPeriodTotals.countByPoint.Sikupilli})</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-[9px] font-bold text-amber-600 uppercase">⚠ L24</span>
+                  <span className="font-semibold text-amber-700 tabular-nums">{fmt(repairPeriodTotals.byPoint.L24)} €</span>
+                  <span className="text-[9px] text-slate-400">({repairPeriodTotals.countByPoint.L24})</span>
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-4">
             {filteredRepairs.length === 0 ? (
               <div className="bg-white rounded-3xl p-12 text-center border border-slate-100">
@@ -1558,6 +1676,17 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                             </button>
                           )}
                         </div>
+
+                        {/* ИСПРАВЛЕНО 2026-07-10: итоговый комментарий виден сразу в списке, без раскрытия карточки. */}
+                        {r.comment && (
+                          <div
+                            className="mt-1.5 text-[11px] text-amber-800 bg-amber-50/70 border border-amber-200/70 rounded-md px-2 py-1 leading-snug line-clamp-2 max-w-full"
+                            title={r.comment}
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <span className="font-bold mr-1">📝</span>{r.comment}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -1604,6 +1733,17 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                           <option value="">— Статус мастера —</option>
                           {REPAIR_MASTER_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
+                        {/* ИСПРАВЛЕНО 2026-07-09: способ оплаты как изменяемый select прямо в карточке.
+                            По умолчанию показываем finalPaymentMethod, фоллбэк — paymentMethod. */}
+                        <select
+                          className="text-[10px] font-semibold px-2 py-1 rounded border border-slate-200 bg-white text-slate-600 outline-none cursor-pointer"
+                          value={r.finalPaymentMethod || r.paymentMethod || ""}
+                          onChange={e => updateRepairField(r.id, "finalPaymentMethod", e.target.value)}
+                          title="Способ оплаты"
+                        >
+                          <option value="">— Способ оплаты —</option>
+                          {PAY_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
                       </div>
 
                       {/* Сумма */}
@@ -1621,7 +1761,7 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                           <div key={i} className="bg-white p-4 rounded-xl border border-slate-200">
                             <div className="flex justify-between items-start mb-2">
                               <span className="font-bold text-slate-800">{it.type || `Ремонт #${i+1}`}</span>
-                              {it.masterName && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded font-bold">{it.masterName}</span>}
+                              {it.masterName && <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded font-bold">👤 {it.masterName}</span>}
                             </div>
 
                             {/* Соисполнители в журнале */}
@@ -1632,6 +1772,36 @@ export const RepairsTab = ({ repairs = [], setRepairs, allOrders = [], allCnc = 
                                     {w.name} ({w.percent}%)
                                   </span>
                                 ))}
+                              </div>
+                            )}
+
+                            {/* ИСПРАВЛЕНО 2026-07-10: ТЗ + мастер + дата принятия под каждой позицией.
+                                Мастер берётся из it.masters[] (новый формат) с фоллбэком на it.masterName.
+                                Дата принятия — общая для всего ремонта (r.orderDate). */}
+                            {(it.masterTask || it.masters?.length > 0) && (
+                              <div className="text-xs bg-blue-50/60 border border-blue-100 rounded-lg p-2.5 mb-2 space-y-1.5">
+                                {it.masters && it.masters.length > 0 && (
+                                  <div className="flex items-start gap-1.5">
+                                    <span className="text-[10px] font-bold text-blue-700 uppercase shrink-0">👤 Мастер:</span>
+                                    <div className="flex flex-wrap gap-1">
+                                      {it.masters.map((m, mi) => (
+                                        <span key={mi} className="text-[10px] bg-white text-blue-800 px-1.5 py-0.5 rounded border border-blue-200 font-semibold">
+                                          {m.name || '—'}{m.cost ? ` · ${fmt(m.cost)}` : ''}{m.outsourceCost ? ` (аутсорс ${fmt(m.outsourceCost)})` : ''}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {it.masterTask && (
+                                  <div className="flex items-start gap-1.5">
+                                    <span className="text-[10px] font-bold text-blue-700 uppercase shrink-0">📋 ТЗ:</span>
+                                    <span className="text-[11px] text-slate-700 whitespace-pre-wrap leading-snug">{it.masterTask}</span>
+                                  </div>
+                                )}
+                                <div className="flex items-center gap-1.5 pt-1 border-t border-blue-100/60">
+                                  <span className="text-[10px] font-bold text-blue-700 uppercase shrink-0">📅 Принят:</span>
+                                  <span className="text-[11px] text-slate-700 font-semibold">{fmtDate(r.orderDate)}</span>
+                                </div>
                               </div>
                             )}
 

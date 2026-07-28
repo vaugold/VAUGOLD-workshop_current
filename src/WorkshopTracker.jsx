@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import useStorage from './hooks/useStorage';
 import { supabase } from './services/supabase';
-import { loadAllImages, loadImagesForOrder, saveImages as adapterSaveImages, deleteImages as adapterDeleteImages } from './services/dataAdapter';
+import { loadAllImages, loadImagesForOrder, saveImages as adapterSaveImages, deleteImages as adapterDeleteImages, saveArrayDelete } from './services/dataAdapter';
 import { useAuth, ROLES } from './context/AuthContext';
 
 // Компоненты UI
@@ -48,6 +48,32 @@ export const WorkshopTracker = () => {
   const [expenses, setExpenses] = useStorage("ws_expenses_v1", {});
   const [providers, setProviders] = useStorage("ws_providers_v1", INITIAL_PROVIDERS);
   const [sources, setSources] = useStorage("ws_sources_v1", ["Meta","TikTok","YouTube","Рекомендация","Витрина","Сайт","AI","Другое"]);
+
+  // ИСПРАВЛЕНО 2026-07-15: useStorage подтягивает данные ОДИН РАЗ при монтировании и далее держит
+  // снимок в памяти. Если другой пользователь (мастер/админ) добавил ремонт/заказ, у тебя в UI
+  // он не появится пока не нажмёшь кнопку refresh или не сделаешь hard-refresh.
+  // Чтобы такого не было — авто-reload при фокусе на странице и при возврате на вкладку.
+  useEffect(() => {
+    const reloadAll = () => {
+      if (typeof reloadOrders === 'function') reloadOrders();
+      if (typeof reloadRepairs === 'function') reloadRepairs();
+    };
+    const onFocus = () => {
+      // Не дёргаем если идёт сохранение (защита от гонок в useStorage)
+      if ((window._savingCount || 0) > 0) return;
+      reloadAll();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') onFocus();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // --- РАЗДЕЛЬНОЕ ХРАНЕНИЕ ФОТО (Защита от переполнения базы) ---
   // Чтобы база не падала от 10-мегабайтных JSON-ов с картинками, мы храним фото отдельно
@@ -199,9 +225,12 @@ export const WorkshopTracker = () => {
   const saveOrder = useCallback(o => _saveWithImages(o, stripped => [stripped, ...(orders||[])]), [orders, _saveWithImages]);
   const updateOrder = useCallback(o => _saveWithImages(o, stripped => (orders||[]).map(x => x.id === stripped.id ? stripped : x)), [orders, _saveWithImages]);
   const deleteOrder = useCallback(id => {
+    // ИСПРАВЛЕНО 2026-07-15: явное удаление через saveArrayDelete (а не через diff в saveArray).
     setOrders((orders||[]).filter(o => o.id !== id));
     setOrderImages(prev => { const n = {...prev}; delete n[id]; return n; });
-    // Не забываем удалить ключ фоток из БД
+    // Явное удаление из БД — раньше это делал diff в saveArray (и он же ломал данные!)
+    saveArrayDelete("ws_orders_v5", id).catch(e => console.warn('deleteOrder:', e.message));
+    // Удаляем фото (безопасно, не критично если не получится)
     adapterDeleteImages(id).catch(e => console.warn('deleteImages:', e.message));
   }, [orders, setOrders]);
 

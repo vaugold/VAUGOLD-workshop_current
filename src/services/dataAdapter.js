@@ -471,22 +471,27 @@ export const saveArray = async (key, newArr) => {
     }
   }
 
-  // DELETE — уже батч через .in() (это место ок)
+  // ИСПРАВЛЕНО 2026-07-15: УДАЛЕНИЕ ПО DIFF'У ОТКЛЮЧЕНО.
+  // Раньше здесь удалялись записи, которые есть в БД, но нет в newArr. Это было катастрофой:
+  // если UI держал устаревший снимок (например, 12 ремонтов из localStorage), и пользователь
+  // создавал новый → saveArray(newArr=13) считал diff с БД (85) → УДАЛЯЛ 73 существующих ремонта.
+  // Теперь удаление — только явное через saveArrayDelete() или через deleteOrder/deleteRepair.
   if (toDelete.length > 0) {
-    // Преобразуем ID обратно к исходному типу (число или строка)
-    const ids = toDelete.map(id => {
-      // Если в текущих строках id был числом — вернём числом
-      const orig = (currentRows || []).find(r => String(r.id) === id);
-      return orig?.id ?? id;
-    });
-    const { error } = await supabase
-      .from(cfg.table)
-      .delete()
-      .in('id', ids);
-    if (error) throw error;
+    console.warn(
+      `[dataAdapter] ${cfg.table}: saveArray хотел удалить ${toDelete.length} записей, но DELETE по diff'у отключён.`,
+      `ID:`, toDelete.slice(0, 5).join(', ') + (toDelete.length > 5 ? '...' : ''),
+      `Если это ожидаемое удаление — используйте saveArrayDelete() или deleteOrder/deleteRepair.`
+    );
   }
 
   // === Сохраняем leftover в settings ===
+  // ИСПРАВЛЕНО 2026-07-15 (v2): КРИТИЧЕСКИ ВАЖНО — не удаляем чужие данные.
+  // Раньше код стирал ключи из leftover, которых не было в newArr — это второй канал потери данных
+  // (наравне с DELETE по diff'у). Теперь:
+  //   1) Загружаем существующий leftover.
+  //   2) Мерджим: новые leftover перезаписывают существующие для тех же ID.
+  //   3) НИКОГДА не удаляем ключи, которых нет в newArr — они могут быть в БД для записей,
+  //      которых у UI нет в данный момент (устаревший кэш). Удаление — ТОЛЬКО через saveArrayDelete.
   if (cfg.storageKey) {
     const leftoverMap = {};
     for (const item of newArr) {
@@ -495,37 +500,73 @@ export const saveArray = async (key, newArr) => {
         leftoverMap[String(item.id)] = lf;
       }
     }
+
     if (Object.keys(leftoverMap).length > 0) {
-      // Удаляем из leftover ключи удалённых items
-      const validIds = new Set(newArr.map(i => String(i.id)));
+      // Есть что сохранять — мерджим с существующим (без удаления чужих ключей)
       const existingLeftover = await settingsGet(cfg.storageKey);
-      if (existingLeftover && typeof existingLeftover === 'object') {
-        for (const key of Object.keys(existingLeftover)) {
-          if (!validIds.has(key)) {
-            delete existingLeftover[key];
-          }
-        }
-      }
-      // Мерджим: новые leftover имеют приоритет, но удалённые записи вычищаем
-      const finalLeftover = { ...existingLeftover, ...leftoverMap };
-      // Убираем пустые
-      for (const key of Object.keys(finalLeftover)) {
-        if (!validIds.has(key)) delete finalLeftover[key];
-      }
-      if (Object.keys(finalLeftover).length > 0) {
-        await settingsUpsert(cfg.storageKey, finalLeftover);
-      } else {
-        // Ничего не осталось — удаляем ключ
-        await settingsDelete(cfg.storageKey).catch(() => {});
-      }
-    } else {
-      // Новых leftover нет — удаляем ключ целиком
-      await settingsDelete(cfg.storageKey).catch(() => {});
+      const finalLeftover = (existingLeftover && typeof existingLeftover === 'object')
+        ? { ...existingLeftover, ...leftoverMap }
+        : leftoverMap;
+      await settingsUpsert(cfg.storageKey, finalLeftover);
     }
+    // Если ничего нового — вообще ничего не делаем. НЕ удаляем существующий ключ.
   }
 
   // Возвращаем обновлённый массив (с реальными ID из БД)
   return await loadArray(key);
+};
+
+// =====================
+// ЯВНОЕ УДАЛЕНИЕ (замена опасного DELETE по diff'у)
+// Использовать вместо неявного удаления в saveArray.
+// =====================
+
+/**
+ * ИСПРАВЛЕНО 2026-07-15: безопасный API для удаления записей.
+ * Раньше saveArray удалял всё, чего нет в newArr — это приводило к потере данных
+ * при устаревшем UI state. Теперь удаление — только явное через эту функцию.
+ *
+ * @param {string} key — ключ из KEY_CONFIG (например, "ws_repairs_v1")
+ * @param {string|string[]} idsToDelete — один ID или массив ID
+ */
+export const saveArrayDelete = async (key, idsToDelete) => {
+  const cfg = KEY_CONFIG[key];
+  if (!cfg) throw new Error(`Unknown key: ${key}`);
+  if (cfg.type !== 'array') throw new Error(`Key ${key} is not array`);
+  if (!cfg.table) throw new Error(`Key ${key} has no table, cannot delete`);
+
+  const ids = (Array.isArray(idsToDelete) ? idsToDelete : [idsToDelete]).map(String);
+  if (ids.length === 0) return;
+
+  // Получаем оригинальные ID (с правильным типом) из БД
+  const { data: currentRows, error: selErr } = await supabase
+    .from(cfg.table)
+    .select('id');
+  if (selErr) throw selErr;
+  const typedIds = ids.map(id => {
+    const orig = (currentRows || []).find(r => String(r.id) === id);
+    return orig?.id ?? id;
+  });
+
+  const { error } = await supabase
+    .from(cfg.table)
+    .delete()
+    .in('id', typedIds);
+  if (error) throw error;
+
+  // Удаляем leftover для этих ID
+  if (cfg.storageKey) {
+    const leftover = await settingsGet(cfg.storageKey);
+    if (leftover && typeof leftover === 'object') {
+      for (const id of ids) delete leftover[id];
+      await settingsUpsert(cfg.storageKey, leftover);
+    }
+  }
+
+  // Удаляем фото
+  for (const id of ids) {
+    await settingsDelete(`ws_img_v1_${id}`).catch(() => {});
+  }
 };
 
 // =====================

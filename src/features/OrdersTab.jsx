@@ -63,6 +63,71 @@ export const OrdersTab = ({
     return orders.filter(o => !o.isDraft && inPeriod(o.orderDate)).length;
   }, [orders, periodMode, periodYear, periodMonth]);
 
+  // ИСПРАВЛЕНО 2026-07-08: для администратора — суммы учитывают ВСЕ активные фильтры (статус+поиск+период)
+  // + разбивка по точкам: Vaugold / Sikupilli / L24.
+  const orderMatchesAllFilters = (o) => {
+    const s = oStatus(o);
+    if (o.isDraft) return statusFilter === "Черновики";
+    if (statusFilter === "Черновики") return false;
+    if (statusFilter !== "Запрос" && s === "Запрос") return false;
+    if (statusFilter === "Неоплаченные") {
+      const oc = calcOrder(o);
+      const l24Unpaid = o.location === "L24" && o.paymentStatus !== "Оплачено" && oc.l24Remaining > 0;
+      if (l24Unpaid) return true;
+      return s !== "Выдано" && oc.balance > 0;
+    }
+    if (statusFilter === "L24") return o.location === "L24";
+    if (statusFilter === "Запрос") return s === "Запрос";
+    if (statusFilter !== "Все" && s !== statusFilter) return false;
+    return true;
+  };
+
+  const orderMatchesSearch = (o) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    // Простая проверка — поиск идёт по тем же полям что и в filteredOrders
+    return (
+      (o.orderTitle || "").toLowerCase().includes(q) ||
+      (o.orderNumber || "").toLowerCase().includes(q) ||
+      (o.clientName || "").toLowerCase().includes(q) ||
+      (o.clientPhone || "").toLowerCase().includes(q) ||
+      (o.location || "").toLowerCase().includes(q)
+    );
+  };
+
+  const orderMatchesPeriod = (o) => periodMode === "all" || inPeriod(o.orderDate);
+
+  // Группа точки для разбивки: Vaugold | Sikupilli | L24
+  const getOrderPointGroup = (o) => {
+    if (o.location === "L24") return "L24";
+    if (o.location === "Sikupilli") return "Sikupilli";
+    return "Vaugold"; // по умолчанию Vaugold
+  };
+
+  const periodTotals = useMemo(() => {
+    let accepted = 0, unpaid = 0, count = 0;
+    const byPoint = { Vaugold: 0, Sikupilli: 0, L24: 0 };
+    const countByPoint = { Vaugold: 0, Sikupilli: 0, L24: 0 };
+    for (const o of orders) {
+      if (!orderMatchesAllFilters(o)) continue;
+      if (!orderMatchesPeriod(o)) continue;
+      if (!orderMatchesSearch(o)) continue;
+      const oc = calcOrder(o);
+      const total = (o.vatEnabled ? oc.clientTotalWithVat : oc.clientTotal) || 0;
+      const group = getOrderPointGroup(o);
+      accepted += total;
+      byPoint[group] += total;
+      count++;
+      countByPoint[group]++;
+      const l24Unpaid = o.location === "L24" && o.paymentStatus !== "Оплачено" && oc.l24Remaining > 0;
+      // ИСПРАВЛЕНО 2026-07-09: если заказ выдан И указан способ оплаты — оплачен.
+      const isPaidOnIssue = o.status === "Выдано" && (o.finalPaymentMethod || o.paymentMethod);
+      if (l24Unpaid) unpaid += (oc.l24Remaining || 0);
+      else if (!isPaidOnIssue && oc.balance > 0) unpaid += oc.balance;
+    }
+    return { accepted, unpaid, count, byPoint, countByPoint };
+  }, [orders, statusFilter, search, periodMode, periodYear, periodMonth]);
+
   /**
    * Умная фильтрация журнала заказов.
    * Учитывает поиск, статусы, черновики и специфичные выборки (L24/Неоплаченные).
@@ -202,6 +267,42 @@ export const OrdersTab = ({
           </div>
         </div>
 
+        {/* ИСПРАВЛЕНО 2026-07-08: для администратора — суммы по ВСЕМ активным фильтрам + разбивка по точкам */}
+        {isSuperuser && (
+          <div className="mb-4 bg-gradient-to-r from-slate-50 to-white border border-slate-200 rounded-[16px] p-3 px-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 text-sm">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-auto">📊 {periodLabel}</span>
+              <span className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Принято:</span>
+                <span className="font-bold text-slate-800 tabular-nums">{fmt(periodTotals.accepted)} €</span>
+                <span className="text-[10px] text-slate-400">({periodTotals.count})</span>
+              </span>
+              <span className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Не оплачено:</span>
+                <span className={`font-bold tabular-nums ${periodTotals.unpaid > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{fmt(periodTotals.unpaid)} €</span>
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1 text-xs mt-2 pt-2 border-t border-slate-200/60">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mr-auto">По точкам:</span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-[9px] font-bold text-indigo-500 uppercase">💎 Vaugold</span>
+                <span className="font-semibold text-indigo-700 tabular-nums">{fmt(periodTotals.byPoint.Vaugold)} €</span>
+                <span className="text-[9px] text-slate-400">({periodTotals.countByPoint.Vaugold})</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-[9px] font-bold text-purple-500 uppercase">🏪 Sikupilli</span>
+                <span className="font-semibold text-purple-700 tabular-nums">{fmt(periodTotals.byPoint.Sikupilli)} €</span>
+                <span className="text-[9px] text-slate-400">({periodTotals.countByPoint.Sikupilli})</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-[9px] font-bold text-amber-600 uppercase">⚠ L24</span>
+                <span className="font-semibold text-amber-700 tabular-nums">{fmt(periodTotals.byPoint.L24)} €</span>
+                <span className="text-[9px] text-slate-400">({periodTotals.countByPoint.L24})</span>
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Список карточек */}
         <div className="grid grid-cols-1 gap-4">
           {filteredOrders.length === 0 ? (
@@ -215,8 +316,21 @@ export const OrdersTab = ({
             const isExp = expandedId === o.id;
             const isDraft = o.isDraft;
 
+            // ИСПРАВЛЕНО 2026-07-08: полупрозрачность для завершённых заказов.
+// Логика:
+//   - Для НЕ-L24: заказ должен быть выдан И оплачен (paymentStatus="Оплачено" ИЛИ balance<=0).
+//   - Для L24: достаточно только "Оплачено" (без требования "Выдано"), потому что у L24 своя
+//     логика статусов — оплата партнёру может прийти до физической выдачи клиенту.
+// ВАЖНО: у большинства старых заказов payment_status = null (не заполнен при миграции),
+// поэтому ориентируемся также на balance<=0 — если долга нет — заказ считается оплаченным.
+            const isPaid = o.paymentStatus === "Оплачено" || (oc.balance || 0) <= 0;
+            const isCompletedFaded = !isDraft && (
+              (o.location === "L24" && isPaid) ||
+              (o.location !== "L24" && o.status === "Выдано" && isPaid)
+            );
+
             return (
-              <div key={o.id} className={`bg-white rounded-[20px] shadow-sm border overflow-hidden transition-all ${isDraft ? 'border-dashed border-slate-300 opacity-80' : 'border-slate-100 hover:shadow-md'}`}>
+              <div key={o.id} className={`bg-white rounded-[20px] shadow-sm border overflow-hidden transition-all ${isDraft ? 'border-dashed border-slate-300 opacity-80' : isCompletedFaded ? 'border-slate-100 opacity-50 hover:opacity-80' : 'border-slate-100 hover:shadow-md'}`}>
                 
                 {/* Шапка карточки */}
                 <div className="p-5 cursor-pointer flex flex-col md:flex-row gap-4 items-start md:items-center justify-between" onClick={() => setExpandedId(isExp ? null : o.id)}>

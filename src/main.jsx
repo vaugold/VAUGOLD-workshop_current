@@ -7,7 +7,7 @@ import { WorkshopTracker } from './WorkshopTracker'
 
 // BUILD MARKER — позволяет проверить, что у пользователя свежая версия бандла.
 // Если в консоли браузера не видишь этого сообщения — кэш браузера держит старую версию.
-const BUILD_TAG = '2026-06-30-05-NUMERIC-UNIVERSAL';
+const BUILD_TAG = '2026-07-15-03-LEFTOVER-SAFE';
 console.log('%c[Vaugold CRM] BUILD: ' + BUILD_TAG + ' (itemToRow + dateFields)', 'background:#0ea5e9;color:white;padding:4px 8px;border-radius:4px;font-weight:bold;')
 window.__BUILD_TAG = BUILD_TAG;
 

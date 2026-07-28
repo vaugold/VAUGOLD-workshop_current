@@ -634,7 +634,7 @@ export const OrderForm = ({
                             </div>
                             <div>
                               <label className="text-[8px] text-rose-700 uppercase block mb-0.5 font-black">Итого себ.</label>
-                              <input type="number" step="0.01" className="w-full bg-rose-100 border-2 border-rose-300 rounded px-2 py-1.5 text-xs font-bold text-rose-800 outline-none" value={ex.cost || ""} onChange={e => setExtraField(i, "cost", e.target.value)} placeholder="0.00" />
+                              <input type="number" step="0.01" className="w-full bg-rose-100 border-2 border-rose-300 rounded px-2 py-1.5 text-xs font-bold text-rose-800 outline-none" value={ex.cost || ""} onChange={e => setMetalField(i, "cost", "cost", e.target.value)} placeholder="0.00" />
                             </div>
                           </div>
                         </div>
@@ -653,7 +653,7 @@ export const OrderForm = ({
                             </div>
                             <div>
                               <label className="text-[8px] text-emerald-700 uppercase block mb-0.5 font-black">Итого прод.</label>
-                              <input type="number" step="0.01" className="w-full bg-emerald-100 border-2 border-emerald-300 rounded px-2 py-1.5 text-xs font-bold text-emerald-800 outline-none" value={ex.price || ""} onChange={e => setExtraField(i, "price", e.target.value)} placeholder="0.00" />
+                              <input type="number" step="0.01" className="w-full bg-emerald-100 border-2 border-emerald-300 rounded px-2 py-1.5 text-xs font-bold text-emerald-800 outline-none" value={ex.price || ""} onChange={e => setMetalField(i, "price", "price", e.target.value)} placeholder="0.00" />
                             </div>
                           </div>
                         </div>
